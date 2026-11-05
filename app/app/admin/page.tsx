@@ -3,7 +3,7 @@
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { LoanList } from "@/components/LoanList";
-import { Button, Card, Empty, ErrorText, TrustedBadge, useAction } from "@/components/ui";
+import { Button, Card, Empty, ErrorText, timeAgo, TrustedBadge, useAction } from "@/components/ui";
 
 export default function Admin() {
   const me = useQuery(api.users.me);
@@ -12,6 +12,7 @@ export default function Admin() {
   const users = useQuery(api.users.listForAdmin, isAdmin ? {} : "skip");
   const tools = useQuery(api.tools.list, isAdmin ? {} : "skip");
   const loans = useQuery(api.loans.all, isAdmin ? {} : "skip");
+  const problems = useQuery(api.automation.recentProblems, isAdmin ? {} : "skip");
   const trust = useAction(useMutation(api.users.setTrustedLender));
   const removeTool = useAction(useMutation(api.tools.adminRemove));
 
@@ -49,6 +50,17 @@ export default function Admin() {
               <span><span className="font-medium">{t.name}</span> <span className="text-xs text-zinc-500">{t.category} · by {t.ownerName}</span></span>
               <Button variant="danger" disabled={removeTool.busy} onClick={() => removeTool.run({ toolId: t._id })}>Remove</Button>
             </div>
+          </Card>
+        ))}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="font-semibold">Automation problems</h2>
+        {problems?.length === 0 && <Empty>No failed automation runs.</Empty>}
+        {problems?.map((p) => (
+          <Card key={p._id}>
+            <p className="text-sm text-rose-700">{p.detail}</p>
+            <p className="text-xs text-zinc-500">{p.kind} · {timeAgo(p.at)}</p>
           </Card>
         ))}
       </section>

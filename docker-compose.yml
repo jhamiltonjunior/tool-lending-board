@@ -1,0 +1,25 @@
+services:
+  n8n:
+    image: n8nio/n8n:2.46.6
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    env_file: .env.n8n
+    environment:
+      GENERIC_TIMEZONE: UTC
+      TZ: UTC
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      # Code nodes need Node's crypto module to compute/verify HMAC signatures.
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
+      # Workflows read LENDLOOP_* values from the environment instead of hardcoding them.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+    extra_hosts:
+      # Lets the container reach a Convex local backend running on the host.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+
+volumes:
+  n8n_data:

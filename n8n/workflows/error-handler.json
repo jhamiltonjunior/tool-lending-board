@@ -1,0 +1,60 @@
+{
+  "id": "LendLoopErrorWf1",
+  "name": "LendLoop - Error handler",
+  "active": true,
+  "settings": { "executionOrder": "v1", "saveDataErrorExecution": "all", "saveDataSuccessExecution": "all" },
+  "nodes": [
+    {
+      "id": "3c4d9e30-0001-4e5f-9c30-000000000001",
+      "name": "On workflow error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "3c4d9e30-0002-4e5f-9c30-000000000002",
+      "name": "Summarize and sign",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Any failed run of the other workflows lands here, so failures are never silent:\n// it is logged and recorded in Convex (visible to admins).\nconst crypto = require('crypto');\nconst secret = $env.LENDLOOP_WEBHOOK_SECRET;\nconst PATH = '/n8n/events';\nconst { execution = {}, workflow = {} } = $input.first().json;\nconst message = (execution.error && execution.error.message) || 'unknown error';\nconst detail = `${workflow.name || 'workflow'} failed at \"${execution.lastNodeExecuted || '?'}\": ${message}`.slice(0, 300);\nconsole.error('[LendLoop automation error]', detail);\nconst body = JSON.stringify({ eventKey: `workflow_error:${workflow.id}:${execution.id}`, kind: 'workflow_error', detail });\nconst ts = String(Date.now());\nconst sig = 'sha256=' + crypto.createHmac('sha256', secret).update(`${ts}.POST.${PATH}.${body}`).digest('hex');\nreturn [{ json: { body, ts, sig } }];"
+      }
+    },
+    {
+      "id": "3c4d9e30-0003-4e5f-9c30-000000000003",
+      "name": "Record error in Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 0],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LENDLOOP_CONVEX_SITE_URL }}/n8n/events",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "content-type", "value": "application/json" },
+            { "name": "x-lendloop-timestamp", "value": "={{ $json.ts }}" },
+            { "name": "x-lendloop-signature", "value": "={{ $json.sig }}" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": { "timeout": 10000 }
+      }
+    }
+  ],
+  "connections": {
+    "On workflow error": { "main": [[{ "node": "Summarize and sign", "type": "main", "index": 0 }]] },
+    "Summarize and sign": { "main": [[{ "node": "Record error in Convex", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {}
+}

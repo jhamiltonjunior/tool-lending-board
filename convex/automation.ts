@@ -1,5 +1,21 @@
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
+import { requireAdmin } from "./lib/auth";
+
+const PROBLEM_KINDS = new Set(["workflow_error", "notification_failed", "reminder_failed"]);
+
+// Admin view of failed automation runs, so nothing fails silently.
+export const recentProblems = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    const events = await ctx.db.query("automationEvents").order("desc").take(300);
+    return events
+      .filter((e) => PROBLEM_KINDS.has(e.kind))
+      .slice(0, 20)
+      .map((e) => ({ _id: e._id, kind: e.kind, detail: e.detail, at: e._creationTime }));
+  },
+});
 
 // Overdue = approved (tool is with the borrower) and the end date has passed.
 // Only the fields needed to send one reminder leave Convex.
