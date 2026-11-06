@@ -61,7 +61,7 @@ Every automation result is written back to the app, so each loan shows its lates
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TB
     U([User browser])
 
     subgraph FE["Next.js · UI only"]
