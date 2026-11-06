@@ -2,7 +2,7 @@
 
 # LendLoop
 
-**Borrow what you need. Lend what you don't.**
+**Borrow the drill your neighbor already owns.**
 
 A neighborhood tool-lending board with authenticated listings, date-range borrow requests and secure, idempotent workflow automation.
 
@@ -13,7 +13,7 @@ A neighborhood tool-lending board with authenticated listings, date-range borrow
 ![n8n](https://img.shields.io/badge/Automation-n8n_2.46-EA4B71?logo=n8n&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
-<img src="docs/screenshots/landing.jpg" alt="LendLoop landing page" width="860" />
+<img src="docs/screenshots/board.jpg" alt="The board: tools on loan are drawn as dashed outlines with a tag saying when they come back" width="860" />
 
 </div>
 
@@ -46,6 +46,10 @@ Neighbors list the tools they are willing to lend, other neighbors request them 
 | **Overdue reminder** | Daily at 09:00 UTC | Reminds borrowers of overdue loans and records each reminder exactly once |
 
 Every automation result is written back to the app, so each loan shows its latest activity (*"Reminder sent 2 days ago"*) and admins see failed runs.
+
+| Landing page | Request rows (admin view) |
+|---|---|
+| <img src="docs/screenshots/landing.jpg" alt="Landing page" width="420" /> | <img src="docs/screenshots/loans.jpg" alt="Loans with date tags, a late return and a pending request" width="420" /> |
 
 ## Features
 
@@ -293,7 +297,8 @@ npx convex env set CLERK_JWT_ISSUER_DOMAIN https://<your-instance>.clerk.account
 npx convex env set LENDLOOP_WEBHOOK_SECRET "$SECRET"
 npx convex env set N8N_LOAN_EVENTS_WEBHOOK_URL http://localhost:5678/webhook/lendloop-loan-events
 npx convex env set ADMIN_EMAILS you@example.com
-npx convex run seed:demo    # optional: demo users, tools and an overdue loan
+npx convex run seed:demo    # optional: five neighbors, seven tools, a late loan and a pending request
+                            # (re-running replaces it; `seed:reset` removes it)
 ```
 
 ### 4. Start n8n
