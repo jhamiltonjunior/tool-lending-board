@@ -1,28 +1,16 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { ShieldCheck, ShieldOff, TriangleAlert, Trash2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
-import { LoanList } from "@/components/LoanList";
-import {
-  Button,
-  Card,
-  CategoryIcon,
-  Empty,
-  ErrorText,
-  Loading,
-  PageHeader,
-  timeAgo,
-  TrustedBadge,
-  useAction,
-} from "@/components/ui";
+import { RequestList } from "@/components/LoanList";
+import { Button, Caption, Empty, ErrorText, label, Loading, PageHeader, timeAgo, ToolGlyph, useAction } from "@/components/ui";
 
-function Stat({ label, value }: { label: string; value: number | undefined }) {
+function Stat({ name, value }: { name: string; value: number | undefined }) {
   return (
-    <Card className="p-4">
-      <p className="text-sm text-stone-500">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-stone-900">{value ?? "–"}</p>
-    </Card>
+    <div className="ll-stat">
+      <p className="ll-small m-0">{name}</p>
+      <p className="ll-stat-value">{value ?? "–"}</p>
+    </div>
   );
 }
 
@@ -38,86 +26,79 @@ export default function Admin() {
   const removeTool = useAction(useMutation(api.tools.adminRemove));
 
   if (me === undefined) return <Loading />;
-  if (!isAdmin) return <Empty title="Admins only" icon={ShieldOff}>You don&apos;t have access to this page.</Empty>;
+  if (!isAdmin) return <Empty title="Admins only.">Ask an admin if you need something changed on the board.</Empty>;
 
   return (
-    <div className="space-y-10">
-      <PageHeader title="Admin" description="Moderate listings, review loans and manage Trusted Lenders." />
+    <div>
+      <PageHeader title="Admin." lede="Look after the board: listings, loans and who lends reliably." />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Members" value={users?.length} />
-        <Stat label="Listings" value={tools?.length} />
-        <Stat label="Active loans" value={loans?.filter((l) => l.status === "approved").length} />
-        <Stat label="Overdue" value={loans?.filter((l) => l.overdue).length} />
+      <div className="ll-stats">
+        <Stat name="Neighbors" value={users?.length} />
+        <Stat name="Tools listed" value={tools?.length} />
+        <Stat name="Lent out now" value={loans?.filter((l) => l.status === "approved").length} />
+        <Stat name="Late" value={loans?.filter((l) => l.overdue).length} />
       </div>
 
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500">Automation problems</h2>
+      <section className="ll-section">
+        <h2 className="ll-section-label">Automation.</h2>
         {problems === undefined ? (
           <Loading />
         ) : problems.length === 0 ? (
-          <Empty title="No failed automation runs" icon={ShieldCheck} />
+          <p className="ll-caption"><strong>Every run went through.</strong> Failed notifications and reminders would show up here.</p>
         ) : (
-          <div className="space-y-2">
+          <div className="ll-rows">
             {problems.map((p) => (
-              <Card key={p._id} className="border-rose-200 bg-rose-50/50 p-4">
-                <p className="flex items-start gap-2 text-sm text-rose-800">
-                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {p.detail}
-                </p>
-                <p className="mt-1 pl-6 text-xs text-stone-500">{p.kind.replace("_", " ")} · {timeAgo(p.at)}</p>
-              </Card>
+              <div key={p._id} className="ll-row">
+                <span className="ll-caption" style={{ color: "var(--alert)" }}>{p.detail}</span>
+                <span className="ll-small">{timeAgo(p.at)}</span>
+              </div>
             ))}
           </div>
         )}
       </section>
 
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500">Members</h2>
+      <section className="ll-section">
+        <h2 className="ll-section-label">Neighbors.</h2>
         <ErrorText error={trust.error} />
-        <Card className="divide-y divide-stone-100 p-0">
+        <div className="ll-rows ll-on-panel">
           {users?.map((u) => (
-            <div key={u._id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-              <div className="min-w-0">
-                <p className="flex flex-wrap items-center gap-2 font-medium text-stone-900">
-                  {u.name} {u.trustedLender && <TrustedBadge />}
-                  {u.role === "admin" && <span className="rounded-full bg-stone-900 px-2 py-0.5 text-xs text-white">Admin</span>}
-                </p>
-                <p className="truncate text-sm text-stone-500">{u.email}</p>
-              </div>
-              <Button size="sm" variant="ghost" disabled={trust.busy} onClick={() => trust.run({ userId: u._id, trusted: !u.trustedLender })}>
-                {u.trustedLender ? <><ShieldOff className="h-3.5 w-3.5" /> Remove Trusted</> : <><ShieldCheck className="h-3.5 w-3.5" /> Mark Trusted Lender</>}
+            <div key={u._id} className="ll-row">
+              <span className="ll-caption">
+                <strong>{u.name}</strong> {u.email}{u.role === "admin" ? ", admin" : ""}{u.trustedLender ? ", trusted lender" : ""}.
+              </span>
+              <Button size="sm" disabled={trust.busy} onClick={() => trust.run({ userId: u._id, trusted: !u.trustedLender })}>
+                {u.trustedLender ? "Remove Trusted Lender" : "Mark as Trusted Lender"}
               </Button>
             </div>
           ))}
-        </Card>
+        </div>
       </section>
 
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500">All listings</h2>
+      <section className="ll-section">
+        <h2 className="ll-section-label">Tools.</h2>
         <ErrorText error={removeTool.error} />
         {tools?.length === 0 ? (
-          <Empty title="No listings yet" />
+          <Empty title="Nothing listed yet." />
         ) : (
-          <Card className="divide-y divide-stone-100 p-0">
+          <div className="ll-rows ll-on-panel">
             {tools?.map((t) => (
-              <div key={t._id} className="flex items-center gap-3 px-5 py-3">
-                <CategoryIcon category={t.category} size="sm" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-stone-900">{t.name}</p>
-                  <p className="text-sm text-stone-500">by {t.ownerName}</p>
-                </div>
-                <Button size="sm" variant="danger" disabled={removeTool.busy} onClick={() => removeTool.run({ toolId: t._id })}>
-                  <Trash2 className="h-3.5 w-3.5" /> Remove
+              <div key={t._id} className="ll-row">
+                <span className="flex min-w-0 items-center gap-3">
+                  <ToolGlyph category={t.category} size={20} />
+                  <Caption as="span" title={t.name} rest={`${label(t.category)}, from ${t.ownerName}.`} />
+                </span>
+                <Button size="sm" variant="quiet" disabled={removeTool.busy} onClick={() => removeTool.run({ toolId: t._id })}>
+                  Remove
                 </Button>
               </div>
             ))}
-          </Card>
+          </div>
         )}
       </section>
 
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500">All loans</h2>
-        <LoanList loans={loans} perspective="admin" emptyTitle="No loans yet" />
+      <section className="ll-section">
+        <h2 className="ll-section-label">Loans.</h2>
+        <RequestList loans={loans} perspective="admin" empty={{ title: "No loans yet." }} />
       </section>
     </div>
   );

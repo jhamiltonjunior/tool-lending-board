@@ -1,9 +1,8 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Check, RotateCcw, X } from "lucide-react";
 import { api } from "@/convex/_generated/api";
-import { LoanList } from "@/components/LoanList";
+import { RequestList } from "@/components/LoanList";
 import { Button, ErrorText, PageHeader, useAction } from "@/components/ui";
 
 export default function Incoming() {
@@ -13,53 +12,46 @@ export default function Incoming() {
   const returned = useAction(useMutation(api.loans.markReturned));
   const busy = approve.busy || decline.busy || returned.busy;
 
-  const pending = loans?.filter((l) => l.status === "pending");
-  const active = loans?.filter((l) => l.status === "approved");
+  const waiting = loans?.filter((l) => l.status === "pending");
+  const out = loans?.filter((l) => l.status === "approved");
   const history = loans?.filter((l) => !["pending", "approved"].includes(l.status));
 
   return (
-    <div className="space-y-10">
-      <PageHeader title="Incoming requests" description="Neighbors asking to borrow your tools." />
+    <div>
+      <PageHeader title="Incoming." lede="Neighbors asking for your tools." />
       <ErrorText error={approve.error ?? decline.error ?? returned.error} />
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500">Waiting for you</h2>
-        <LoanList
-          loans={pending}
+        <h2 className="ll-section-label">Waiting for you.</h2>
+        <RequestList
+          loans={waiting}
           perspective="owner"
-          emptyTitle="You're all caught up"
-          emptyText="New requests for your tools will show up here."
+          empty={{ title: "No one is waiting.", text: "New requests for your tools show up here." }}
           actions={(l) => (
             <>
-              <Button size="sm" disabled={busy} onClick={() => approve.run({ loanId: l._id })}>
-                <Check className="h-3.5 w-3.5" /> Approve
-              </Button>
-              <Button size="sm" variant="danger" disabled={busy} onClick={() => decline.run({ loanId: l._id })}>
-                <X className="h-3.5 w-3.5" /> Decline
-              </Button>
+              <Button size="sm" disabled={busy} onClick={() => approve.run({ loanId: l._id })}>Approve</Button>
+              <Button size="sm" variant="quiet" disabled={busy} onClick={() => decline.run({ loanId: l._id })}>Decline</Button>
             </>
           )}
         />
       </section>
 
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500">Lent out now</h2>
-        <LoanList
-          loans={active}
+      <section className="ll-section">
+        <h2 className="ll-section-label">Lent out.</h2>
+        <RequestList
+          loans={out}
           perspective="owner"
-          emptyTitle="Nothing lent out"
+          empty={{ title: "Everything is home." }}
           actions={(l) => (
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => returned.run({ loanId: l._id })}>
-              <RotateCcw className="h-3.5 w-3.5" /> Mark returned
-            </Button>
+            <Button size="sm" disabled={busy} onClick={() => returned.run({ loanId: l._id })}>Mark as returned</Button>
           )}
         />
       </section>
 
       {history && history.length > 0 && (
-        <section>
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500">History</h2>
-          <LoanList loans={history} perspective="owner" emptyTitle="" />
+        <section className="ll-section">
+          <h2 className="ll-section-label">Earlier.</h2>
+          <RequestList loans={history} perspective="owner" empty={{ title: "" }} />
         </section>
       )}
     </div>

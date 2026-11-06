@@ -1,64 +1,20 @@
 "use client";
 
+import Link from "next/link";
 import { ConvexError } from "convex/values";
-import { ComponentType, ReactNode, useState } from "react";
-import {
-  BellRing,
-  CookingPot,
-  Drill,
-  Hammer,
-  Inbox,
-  LoaderCircle,
-  Package,
-  Repeat,
-  ShieldCheck,
-  Sprout,
-  SprayCan,
-  Tent,
-  TriangleAlert,
-} from "lucide-react";
+import { ComponentType, ReactNode, useId, useState } from "react";
+import { CookingPot, Drill, Hammer, Package, Search, Shovel, SprayCan, Tent } from "lucide-react";
 
 export const CATEGORIES = ["power tools", "hand tools", "garden", "kitchen", "camping", "cleaning", "other"];
 export const CONDITIONS = ["new", "good", "fair", "worn"];
 
-type IconType = ComponentType<{ className?: string }>;
+export const label = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-const CATEGORY_META: Record<string, { icon: IconType; tint: string }> = {
-  "power tools": { icon: Drill, tint: "bg-orange-100 text-orange-700" },
-  "hand tools": { icon: Hammer, tint: "bg-amber-100 text-amber-700" },
-  garden: { icon: Sprout, tint: "bg-lime-100 text-lime-700" },
-  kitchen: { icon: CookingPot, tint: "bg-rose-100 text-rose-700" },
-  camping: { icon: Tent, tint: "bg-sky-100 text-sky-700" },
-  cleaning: { icon: SprayCan, tint: "bg-cyan-100 text-cyan-700" },
-  other: { icon: Package, tint: "bg-stone-200 text-stone-700" },
-};
-
-export function CategoryIcon({ category, size = "md" }: { category: string; size?: "sm" | "md" | "lg" }) {
-  const meta = CATEGORY_META[category] ?? CATEGORY_META.other;
-  const Icon = meta.icon;
-  const box = { sm: "h-8 w-8 rounded-lg", md: "h-11 w-11 rounded-xl", lg: "h-14 w-14 rounded-2xl" }[size];
-  const icon = { sm: "h-4 w-4", md: "h-5 w-5", lg: "h-7 w-7" }[size];
-  return (
-    <span className={`inline-flex shrink-0 items-center justify-center ${box} ${meta.tint}`}>
-      <Icon className={icon} />
-    </span>
-  );
-}
-
-export function Logo({ className = "" }: { className?: string }) {
-  return (
-    <span className={`inline-flex items-center gap-2 font-semibold tracking-tight ${className}`}>
-      <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm shadow-emerald-600/30">
-        <Repeat className="h-4 w-4" />
-      </span>
-      LendLoop
-    </span>
-  );
-}
+/* ---------- helpers ---------- */
 
 export function errorMessage(e: unknown): string {
   if (e instanceof ConvexError) return String(e.data);
-  return "Something went wrong. Please try again.";
+  return "Something went wrong. Try again in a moment.";
 }
 
 // Wraps a mutation call with a busy state and a readable error.
@@ -92,148 +48,167 @@ export function timeAgo(ms: number, now = Date.now()): string {
   return `${d} day${d === 1 ? "" : "s"} ago`;
 }
 
+/** "2026-11-14" -> "Nov 14" */
 export function formatDate(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-const STATUS_STYLE: Record<string, string> = {
-  pending: "bg-amber-50 text-amber-700 ring-amber-600/20",
-  approved: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
-  declined: "bg-rose-50 text-rose-700 ring-rose-600/20",
-  cancelled: "bg-stone-100 text-stone-600 ring-stone-500/20",
-  returned: "bg-sky-50 text-sky-700 ring-sky-600/20",
+export const formatRange = (start: string, end: string) =>
+  start === end ? formatDate(start) : `${formatDate(start)} to ${formatDate(end)}`;
+
+export function daysLate(endDate: string, now = Date.now()): number {
+  const today = new Date(now).toISOString().slice(0, 10);
+  return Math.max(0, Math.round((Date.parse(today) - Date.parse(endDate)) / 86_400_000));
+}
+
+/* ---------- glyphs ---------- */
+
+type IconType = ComponentType<{ size?: number; strokeWidth?: number; strokeDasharray?: string; className?: string; "aria-hidden"?: boolean }>;
+
+const CATEGORY_ICON: Record<string, IconType> = {
+  "power tools": Drill,
+  "hand tools": Hammer,
+  garden: Shovel,
+  kitchen: CookingPot,
+  camping: Tent,
+  cleaning: SprayCan,
+  other: Package,
 };
 
-export function StatusBadge({ status, overdue }: { status: string; overdue?: boolean }) {
-  const label = overdue ? "Overdue" : status === "approved" ? "On loan" : status[0].toUpperCase() + status.slice(1);
-  const style = overdue ? "bg-rose-600 text-white ring-rose-600" : STATUS_STYLE[status] ?? "bg-stone-100 ring-stone-300";
-  return <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${style}`}>{label}</span>;
+/** Category glyph, straight on the panel. Dashed for a tool that is lent out. */
+export function ToolGlyph({ category, size = 24, dashed = false }: { category: string; size?: number; dashed?: boolean }) {
+  const Icon = CATEGORY_ICON[category] ?? Package;
+  return <Icon size={size} strokeWidth={1.75} strokeDasharray={dashed ? "2.5 2.5" : undefined} className="ll-glyph" aria-hidden />;
 }
 
-export function AvailabilityBadge({ available }: { available: boolean }) {
-  return available ? (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
-      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Available
-    </span>
-  ) : (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-stone-100 px-2.5 py-0.5 text-xs font-medium text-stone-600 ring-1 ring-inset ring-stone-500/20">
-      <span className="h-1.5 w-1.5 rounded-full bg-stone-400" /> On loan
-    </span>
-  );
+/* ---------- primitives ---------- */
+
+type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: "primary" | "secondary" | "quiet";
+  size?: "sm" | "md" | "lg";
+  href?: string;
+};
+
+export function Button({ variant = "secondary", size = "md", href, className = "", children, ...rest }: ButtonProps) {
+  const cls = ["ll-btn", variant !== "secondary" && `ll-btn-${variant}`, size !== "md" && `ll-btn-${size}`, className].filter(Boolean).join(" ");
+  if (href) return <Link href={href} className={cls}>{children}</Link>;
+  return <button type="button" {...rest} className={cls}>{children}</button>;
 }
 
-export function TrustedBadge() {
+export function Field({ label: text, children }: { label: string; children: ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-inset ring-indigo-600/20">
-      <ShieldCheck className="h-3.5 w-3.5" /> Trusted Lender
-    </span>
+    <label className="ll-field">
+      <span className="ll-field-label">{text}</span>
+      {children}
+    </label>
   );
 }
 
-const ACTIVITY_LABEL: Record<string, string> = {
-  notification_sent: "Notification sent",
+export function SearchField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const id = useId();
+  return (
+    <div className="ll-field">
+      <label htmlFor={id} className="ll-visually-hidden">Search tools</label>
+      <div className="ll-input-wrap has-glyph">
+        <Search size={18} strokeWidth={1.75} className="ll-glyph" aria-hidden />
+        <input id={id} className="ll-input" placeholder="Search tools" value={value} onChange={(e) => onChange(e.target.value)} />
+      </div>
+    </div>
+  );
+}
+
+export function CategoryFilter({ value, onChange, counts }: { value: string; onChange: (v: string) => void; counts?: Record<string, number> }) {
+  const options = [{ value: "", label: "All" }, ...CATEGORIES.map((c) => ({ value: c, label: label(c) }))];
+  return (
+    <div className="ll-cats" role="group" aria-label="Categories">
+      {options.map((o) => (
+        <button key={o.value || "all"} type="button" className="ll-cat" aria-pressed={o.value === value} onClick={() => onChange(o.value)}>
+          {o.label}
+          {counts && counts[o.value] !== undefined && <span className="ll-cat-count">{counts[o.value]}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function DueTag({ late = false, children }: { late?: boolean; children: ReactNode }) {
+  return <span className={late ? "ll-tag ll-tag-late" : "ll-tag"}>{children}</span>;
+}
+
+/** Two-tone caption: the title in ink with a period, the rest in ink-muted. */
+export function Caption({ title, rest, as: Tag = "p" }: { title: string; rest?: string; as?: "p" | "figcaption" | "span" }) {
+  return (
+    <Tag className="ll-caption">
+      <strong>{title.replace(/\.?$/, ".")}</strong>
+      {rest ? ` ${rest}` : null}
+    </Tag>
+  );
+}
+
+export function ErrorText({ error }: { error: string | null }) {
+  return error ? <p className="ll-error" role="alert">{error}</p> : null;
+}
+
+export function Empty({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <div className="ll-empty">
+      <p className="ll-caption"><strong>{title}</strong>{children ? <> {children}</> : null}</p>
+    </div>
+  );
+}
+
+export function Loading() {
+  return <p className="ll-small ll-empty">Loading…</p>;
+}
+
+export function PageHeader({ title, lede, side }: { title: string; lede?: ReactNode; side?: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-end justify-between gap-8 pb-6 pt-16 max-[720px]:pt-8">
+      <div>
+        <h1 className="ll-section-title">{title}</h1>
+        {lede && <p className="ll-lede ll-tabular" style={{ marginTop: "var(--space-2)" }}>{lede}</p>}
+      </div>
+      {side}
+    </div>
+  );
+}
+
+const ACTIVITY: Record<string, string> = {
+  notification_sent: "Notified",
   notification_failed: "Notification failed",
   reminder_sent: "Reminder sent",
   reminder_failed: "Reminder failed",
   workflow_error: "Automation error",
 };
 
+/** Latest automation result for a loan, as a quiet line: "Reminder sent 2 days ago". */
 export function Activity({ activity }: { activity: { kind: string; at: number; detail: string } | null }) {
   if (!activity) return null;
   const failed = activity.kind.endsWith("failed") || activity.kind === "workflow_error";
-  const Icon = failed ? TriangleAlert : BellRing;
   return (
-    <p className={`inline-flex items-center gap-1.5 text-xs ${failed ? "text-rose-700" : "text-stone-500"}`} title={activity.detail}>
-      <Icon className="h-3.5 w-3.5" />
-      {ACTIVITY_LABEL[activity.kind] ?? activity.kind} {timeAgo(activity.at)}
-    </p>
+    <span className={failed ? "is-problem" : undefined} title={activity.detail}>
+      {ACTIVITY[activity.kind] ?? activity.kind} {timeAgo(activity.at)}
+    </span>
   );
 }
 
-export function Card({ children, className = "", interactive = false }: { children: ReactNode; className?: string; interactive?: boolean }) {
-  const hover = interactive
-    ? "transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg hover:shadow-emerald-900/[0.06]"
-    : "";
+export function Accordion({ items }: { items: { q: string; a: ReactNode }[] }) {
+  const [open, setOpen] = useState(-1);
   return (
-    <div className={`rounded-2xl border border-stone-200/80 bg-white p-5 shadow-sm shadow-stone-900/[0.03] ${hover} ${className}`}>
-      {children}
-    </div>
-  );
-}
-
-export function Button({
-  children,
-  variant = "primary",
-  size = "md",
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "ghost" | "danger"; size?: "sm" | "md" }) {
-  const styles = {
-    primary: "bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 focus-visible:outline-emerald-600",
-    secondary: "bg-stone-900 text-white shadow-sm hover:bg-stone-700 focus-visible:outline-stone-900",
-    ghost:
-      "bg-white text-stone-700 ring-1 ring-inset ring-stone-300 hover:bg-emerald-50 hover:text-emerald-800 hover:ring-emerald-300 focus-visible:outline-emerald-600",
-    danger: "bg-white text-rose-700 ring-1 ring-inset ring-rose-300 hover:bg-rose-50 focus-visible:outline-rose-500",
-  }[variant];
-  const sizes = { sm: "px-2.5 py-1.5 text-xs", md: "px-3.5 py-2 text-sm" }[size];
-  return (
-    <button
-      {...props}
-      className={`inline-flex items-center justify-center gap-1.5 rounded-xl font-medium transition active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${sizes} ${styles} ${props.className ?? ""}`}
-    >
-      {children}
-    </button>
-  );
-}
-
-export const inputClass =
-  "w-full rounded-xl border-0 bg-white px-3.5 py-2.5 text-sm text-stone-900 shadow-sm ring-1 ring-inset ring-stone-300 placeholder:text-stone-400 focus:ring-2 focus:ring-inset focus:ring-emerald-600";
-
-export function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="block space-y-1.5">
-      <span className="text-sm font-medium text-stone-700">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-export function ErrorText({ error }: { error: string | null }) {
-  return error ? (
-    <p className="flex items-center gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
-      <TriangleAlert className="h-4 w-4 shrink-0" /> {error}
-    </p>
-  ) : null;
-}
-
-export function Empty({ title, children, icon: Icon = Inbox }: { title: string; children?: ReactNode; icon?: IconType }) {
-  return (
-    <div className="flex flex-col items-center rounded-2xl border border-dashed border-stone-300 bg-white/60 px-6 py-12 text-center">
-      <span className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-stone-100 text-stone-500">
-        <Icon className="h-6 w-6" />
-      </span>
-      <p className="font-medium text-stone-800">{title}</p>
-      {children && <p className="mt-1 max-w-sm text-sm text-stone-500">{children}</p>}
-    </div>
-  );
-}
-
-export function Loading({ label = "Loading" }: { label?: string }) {
-  return (
-    <p className="flex items-center gap-2 py-8 text-sm text-stone-500">
-      <LoaderCircle className="h-4 w-4 animate-spin" /> {label}…
-    </p>
-  );
-}
-
-export function PageHeader({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
-  return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-stone-900">{title}</h1>
-        {description && <p className="mt-1 text-sm text-stone-500">{description}</p>}
-      </div>
-      {action}
-    </div>
+    <ul className="ll-acc">
+      {items.map((it, i) => {
+        const isOpen = open === i;
+        return (
+          <li key={it.q} className="ll-acc-item">
+            <button type="button" className="ll-acc-q" aria-expanded={isOpen} aria-controls={`faq-${i}`} onClick={() => setOpen(isOpen ? -1 : i)}>
+              {it.q}
+              <span className="ll-acc-icon" aria-hidden="true" />
+            </button>
+            {isOpen && <p id={`faq-${i}`} className="ll-acc-a">{it.a}</p>}
+          </li>
+        );
+      })}
+    </ul>
   );
 }

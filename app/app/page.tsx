@@ -1,141 +1,105 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { CalendarDays, Check, Search } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import {
-  AvailabilityBadge,
-  Button,
-  Card,
-  CATEGORIES,
-  CategoryIcon,
-  Empty,
-  ErrorText,
-  inputClass,
-  Loading,
-  PageHeader,
-  TrustedBadge,
-  useAction,
-} from "@/components/ui";
+import { Button, CategoryFilter, Empty, ErrorText, Field, Loading, PageHeader, SearchField, useAction } from "@/components/ui";
+import { OwnerLine, ToolSlot } from "@/components/ToolSlot";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
 function RequestForm({ toolId, onDone, onCancel }: { toolId: Id<"tools">; onDone: () => void; onCancel: () => void }) {
-  const request = useMutation(api.loans.request);
   const [startDate, setStart] = useState(today());
   const [endDate, setEnd] = useState(today());
-  const { run, busy, error } = useAction(request);
+  const { run, busy, error } = useAction(useMutation(api.loans.request));
   return (
     <form
-      className="mt-4 space-y-3 rounded-xl bg-stone-50 p-3"
+      className="ll-slot-form"
       onSubmit={async (e) => {
         e.preventDefault();
         if (await run({ toolId, startDate, endDate })) onDone();
       }}
     >
-      <div className="grid grid-cols-2 gap-2">
-        <label className="text-xs font-medium text-stone-600">
-          From
-          <input type="date" required min={today()} value={startDate} onChange={(e) => setStart(e.target.value)} className={`${inputClass} mt-1`} />
-        </label>
-        <label className="text-xs font-medium text-stone-600">
-          Until
-          <input type="date" required min={startDate} value={endDate} onChange={(e) => setEnd(e.target.value)} className={`${inputClass} mt-1`} />
-        </label>
+      <Field label="From">
+        <input type="date" className="ll-input" required min={today()} value={startDate} onChange={(e) => setStart(e.target.value)} />
+      </Field>
+      <Field label="Until">
+        <input type="date" className="ll-input" required min={startDate} value={endDate} onChange={(e) => setEnd(e.target.value)} />
+      </Field>
+      <div className="flex gap-1">
+        <Button type="submit" variant="primary" disabled={busy}>Send request</Button>
+        <Button variant="quiet" onClick={onCancel}>Cancel</Button>
       </div>
-      <ErrorText error={error} />
-      <div className="flex gap-2">
-        <Button type="submit" disabled={busy} className="flex-1">Send request</Button>
-        <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
-      </div>
+      {error && <div className="basis-full"><ErrorText error={error} /></div>}
     </form>
   );
 }
 
-export default function Browse() {
+export default function Board() {
   const [category, setCategory] = useState("");
   const [search, setSearch] = useState("");
-  const tools = useQuery(api.tools.list, category ? { category } : {});
+  const tools = useQuery(api.tools.list, {});
   const me = useQuery(api.users.me);
   const [requesting, setRequesting] = useState<Id<"tools"> | null>(null);
   const [sent, setSent] = useState<Set<string>>(new Set());
 
-  const filtered = tools?.filter((t) => t.name.toLowerCase().includes(search.trim().toLowerCase()));
+  const counts = useMemo(() => {
+    const c: Record<string, number> = { "": tools?.length ?? 0 };
+    for (const t of tools ?? []) c[t.category] = (c[t.category] ?? 0) + 1;
+    return c;
+  }, [tools]);
+
+  const shown = tools?.filter(
+    (t) => (!category || t.category === category) && t.name.toLowerCase().includes(search.trim().toLowerCase()),
+  );
+  const free = tools?.filter((t) => t.available).length ?? 0;
+  const neighbors = new Set(tools?.map((t) => t.ownerId)).size;
 
   return (
     <div>
-      <PageHeader title="Browse tools" description="Everything your neighbors are willing to lend." />
-
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="relative sm:w-72">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-          <input placeholder="Search tools" value={search} onChange={(e) => setSearch(e.target.value)} className={`${inputClass} pl-9`} />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {["", ...CATEGORIES].map((c) => (
-            <button
-              key={c || "all"}
-              onClick={() => setCategory(c)}
-              className={`rounded-full px-3 py-1.5 text-sm font-medium capitalize transition ${
-                category === c ? "bg-stone-900 text-white" : "bg-white text-stone-600 ring-1 ring-inset ring-stone-200 hover:bg-stone-100"
-              }`}
-            >
-              {c || "All"}
-            </button>
-          ))}
-        </div>
+      <PageHeader
+        title="The board."
+        lede={tools ? `${tools.length} tools from ${neighbors} neighbor${neighbors === 1 ? "" : "s"}, ${free} free right now.` : undefined}
+        side={<div className="w-[300px] max-w-full"><SearchField value={search} onChange={setSearch} /></div>}
+      />
+      <div className="mb-6">
+        <CategoryFilter value={category} onChange={setCategory} counts={counts} />
       </div>
 
-      {filtered === undefined ? (
+      {shown === undefined ? (
         <Loading />
-      ) : filtered.length === 0 ? (
-        <Empty title="Nothing here yet">Try another category, or list one of your own tools.</Empty>
+      ) : shown.length === 0 ? (
+        <Empty title="Nothing matches.">Ask the street: someone may have one that isn&apos;t listed yet.</Empty>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((t) => {
-            const mine = me && t.ownerId === me._id;
+        <ul className="ll-list">
+          {shown.map((t) => {
+            const mine = me?._id === t.ownerId;
+            const action = mine ? (
+              <span className="ll-small">Your tool</span>
+            ) : sent.has(t._id) ? (
+              <span className="ll-status">Request sent</span>
+            ) : requesting === t._id ? null : (
+              <Button size="sm" onClick={() => setRequesting(t._id)}>
+                {t.available ? "Request to borrow" : "Request later dates"}
+              </Button>
+            );
             return (
-              <Card key={t._id} className="flex flex-col" interactive>
-                <div className="flex items-start gap-3">
-                  <CategoryIcon category={t.category} />
-                  <div className="min-w-0 flex-1">
-                    <h3 className="truncate font-semibold text-stone-900">{t.name}</h3>
-                    <p className="text-sm capitalize text-stone-500">{t.category} · {t.condition}</p>
-                  </div>
-                  <AvailabilityBadge available={t.available} />
-                </div>
-                {t.description && <p className="mt-3 line-clamp-3 text-sm text-stone-600">{t.description}</p>}
-                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-stone-500">
-                  <span>Lent by <span className="font-medium text-stone-700">{mine ? "you" : t.ownerName}</span></span>
-                  {t.ownerTrusted && <TrustedBadge />}
-                </div>
-                <div className="mt-auto">
-                  {!mine &&
-                    (requesting === t._id ? (
-                      <RequestForm
-                        toolId={t._id}
-                        onCancel={() => setRequesting(null)}
-                        onDone={() => {
-                          setRequesting(null);
-                          setSent(new Set(sent).add(t._id));
-                        }}
-                      />
-                    ) : sent.has(t._id) ? (
-                      <p className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700">
-                        <Check className="h-4 w-4" /> Request sent
-                      </p>
-                    ) : (
-                      <Button variant="ghost" className="mt-4 w-full" onClick={() => setRequesting(t._id)}>
-                        <CalendarDays className="h-4 w-4" /> Request to borrow
-                      </Button>
-                    ))}
-                </div>
-              </Card>
+              <ToolSlot key={t._id} tool={t} owner={<OwnerLine tool={t} you={mine} />} action={action}>
+                {requesting === t._id && (
+                  <RequestForm
+                    toolId={t._id}
+                    onCancel={() => setRequesting(null)}
+                    onDone={() => {
+                      setRequesting(null);
+                      setSent(new Set(sent).add(t._id));
+                    }}
+                  />
+                )}
+              </ToolSlot>
             );
           })}
-        </div>
+        </ul>
       )}
     </div>
   );

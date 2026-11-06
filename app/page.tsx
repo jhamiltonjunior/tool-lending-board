@@ -2,94 +2,155 @@
 
 import Link from "next/link";
 import { useQuery } from "convex/react";
-import { Show, SignInButton } from "@clerk/nextjs";
-import { ArrowRight, BellRing, CalendarDays, Handshake } from "lucide-react";
+import { Show, SignInButton, UserButton } from "@clerk/nextjs";
 import { api } from "@/convex/_generated/api";
-import { CategoryIcon, Empty, Loading, Logo } from "@/components/ui";
+import { Accordion, Button, Caption, label, ToolGlyph } from "@/components/ui";
+import { PEG_HOLES } from "@/components/pegboard";
 
 const STEPS = [
-  { icon: Handshake, title: "List what you own", text: "Drills, ladders, tents: share the things that sit in your garage." },
-  { icon: CalendarDays, title: "Request a date range", text: "Ask to borrow for exactly the days you need it." },
-  { icon: BellRing, title: "Automatic reminders", text: "Owners and borrowers are notified, and late returns get a nudge." },
+  { title: "List what you own", text: "A drill, a ladder, a tent. Say what condition it's in and what comes with it." },
+  { title: "Ask for the days you need", text: "Pick a start and an end date. The owner approves or declines." },
+  { title: "Bring it back", text: "If a return runs late, the borrower gets a reminder that day. Nobody has to chase anyone." },
 ];
+
+const FAQ = [
+  {
+    q: "Do I pay anything to borrow?",
+    a: "No. Borrowing is free between neighbors. Owners lend because a drill that sits in a box all year is a drill nobody uses.",
+  },
+  {
+    q: "Who can see the tools I list?",
+    a: "Neighbors who sign in see the whole board. This page only shows what is free right now, without names.",
+  },
+  {
+    q: "What happens if I return something late?",
+    a: "The request shows as late for both of you, and you get a reminder once a day until the tool is marked as returned.",
+  },
+  {
+    q: "Can I say no to a request?",
+    a: "Yes. Every request waits for the owner. Decline it and the borrower is told right away.",
+  },
+  {
+    q: "What does Trusted Lender mean?",
+    a: "Admins mark neighbors who lend often and keep their tools in good shape. The label shows next to their name on the board.",
+  },
+];
+
+function OpenBoard({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
+  return (
+    <>
+      <Show when="signed-out">
+        <SignInButton mode="modal" forceRedirectUrl="/app">
+          <button type="button" className={`ll-btn ll-btn-primary ${size !== "md" ? `ll-btn-${size}` : ""}`}>Open the board</button>
+        </SignInButton>
+      </Show>
+      <Show when="signed-in">
+        <Button href="/app" variant="primary" size={size}>Open the board</Button>
+      </Show>
+    </>
+  );
+}
+
+function Pegboard() {
+  return (
+    <svg className="absolute left-0 top-0" viewBox="0 0 560 340" width={560} height={340} aria-hidden="true">
+      <g style={{ fill: "var(--ink-muted)" }}>
+        {PEG_HOLES.map(([x, y]) => <circle key={`${x}-${y}`} cx={x} cy={y} r={2.6} />)}
+      </g>
+      <rect x={262} y={40} width={120} height={84} rx={16} fill="none" stroke="var(--line-strong)" strokeWidth={1.5} strokeDasharray="6 5" />
+    </svg>
+  );
+}
 
 export default function Home() {
   const tools = useQuery(api.tools.publicList);
+  const featured = tools?.slice(0, 4) ?? [];
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-emerald-50/70 via-stone-50 to-stone-50">
-      <header className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
-        <Logo className="text-lg text-stone-900" />
-        <Show when="signed-in">
-          <Link href="/app" className="text-sm font-medium text-stone-700 hover:text-stone-900">Open your board →</Link>
-        </Show>
-      </header>
-
-      <section className="mx-auto max-w-3xl px-4 pb-14 pt-12 text-center sm:pt-20">
-        <span className="inline-flex items-center rounded-full bg-white px-3 py-1 text-xs font-medium text-emerald-700 shadow-sm ring-1 ring-emerald-600/15">
-          Your neighborhood tool library
-        </span>
-        <h1 className="mt-5 text-4xl font-semibold tracking-tight text-stone-900 sm:text-6xl">
-          Borrow what you need.
-          <br />
-          <span className="text-emerald-600">Lend what you don&apos;t.</span>
-        </h1>
-        <p className="mx-auto mt-5 max-w-xl text-lg text-stone-600">
-          LendLoop connects neighbors who have tools with neighbors who need them, without buying something you&apos;ll use twice.
-        </p>
-        <div className="mt-8 flex justify-center">
+    <>
+      <header className="ll-nav">
+        <Link href="/" className="ll-wordmark">LendLoop</Link>
+        <nav aria-label="Main">
+          <ul className="ll-nav-links">
+            <li><a className="ll-nav-link" href="#board">The board</a></li>
+            <li><a className="ll-nav-link" href="#how">How it works</a></li>
+            <li><a className="ll-nav-link" href="#questions">Questions</a></li>
+          </ul>
+        </nav>
+        <div className="ll-nav-end">
+          <Show when="signed-in"><UserButton /></Show>
           <Show when="signed-out">
-            <SignInButton mode="modal">
-              <button className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 font-medium text-white shadow-lg shadow-emerald-600/20 transition hover:bg-emerald-700">
-                Sign in to lend or borrow <ArrowRight className="h-4 w-4" />
-              </button>
+            <SignInButton mode="modal" forceRedirectUrl="/app">
+              <button type="button" className="ll-btn ll-btn-quiet ll-btn-sm">Sign in</button>
             </SignInButton>
           </Show>
-          <Show when="signed-in">
-            <Link href="/app" className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 font-medium text-white shadow-lg shadow-emerald-600/20 transition hover:bg-emerald-700">
-              Go to your board <ArrowRight className="h-4 w-4" />
-            </Link>
-          </Show>
         </div>
-      </section>
+      </header>
 
-      <section className="mx-auto max-w-5xl px-4 pb-16">
-        <div className="mb-4 flex items-end justify-between">
-          <h2 className="text-lg font-semibold text-stone-900">Available now</h2>
-          {tools && tools.length > 0 && <span className="text-sm text-stone-500">{tools.length} tools ready to borrow</span>}
-        </div>
-        {tools === undefined ? (
-          <Loading />
-        ) : tools.length === 0 ? (
-          <Empty title="No tools listed yet">Be the first to lend one to your neighbors.</Empty>
-        ) : (
-          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {tools.map((t) => (
-              <li key={t._id} className="flex items-center gap-3 rounded-2xl border border-stone-200/80 bg-white p-4 shadow-sm shadow-stone-900/[0.03] transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg hover:shadow-emerald-900/[0.06]">
-                <CategoryIcon category={t.category} />
-                <div className="min-w-0">
-                  <p className="truncate font-medium text-stone-900">{t.name}</p>
-                  <p className="text-sm capitalize text-stone-500">{t.category}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <main>
+        <section className="mx-auto max-w-[1104px] px-8 pt-[120px] text-center max-[720px]:px-4 max-[720px]:pt-16">
+          <h1 className="ll-display mx-auto max-w-[12.5em]">Borrow the drill your neighbor already owns.</h1>
+          <p className="ll-lede mx-auto" style={{ marginTop: "var(--space-6)", maxWidth: "28em" }}>
+            LendLoop is the list of tools on your street. Ask for the days you need, pick it up, bring it back.
+          </p>
+          <div className="mt-8"><OpenBoard size="lg" /></div>
+        </section>
 
-      <section className="border-t border-stone-200 bg-white">
-        <div className="mx-auto grid max-w-5xl gap-8 px-4 py-14 sm:grid-cols-3">
-          {STEPS.map((s) => (
-            <div key={s.title}>
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
-                <s.icon className="h-5 w-5" />
-              </span>
-              <h3 className="mt-3 font-semibold text-stone-900">{s.title}</h3>
-              <p className="mt-1 text-sm text-stone-600">{s.text}</p>
+        <div className="ll-page">
+          <section id="board" className="scroll-mt-8 pt-32 max-[720px]:pt-16">
+            <div className="mb-16 flex items-center justify-between gap-4 max-[720px]:mb-8">
+              <h2 className="ll-section-title">On the board this week.</h2>
+              {tools && tools.length > featured.length && (
+                <span className="ll-small ll-tabular">{tools.length} free right now</span>
+              )}
             </div>
-          ))}
+            {tools === undefined ? (
+              <p className="ll-small">Loading…</p>
+            ) : featured.length === 0 ? (
+              <p className="ll-caption"><strong>Nothing free right now.</strong> Everything on the board is lent out. Check back in a few days.</p>
+            ) : (
+              <div className="ll-cards">
+                {featured.map((t) => (
+                  <figure key={t._id} className="ll-card">
+                    <div className="ll-card-art"><ToolGlyph category={t.category} size={44} /></div>
+                    <Caption as="figcaption" title={t.name} rest={`${label(t.category)}, free now.`} />
+                  </figure>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section id="how" className="scroll-mt-8 pt-32 max-[720px]:pt-16">
+            <h2 className="ll-section-title mb-16 max-[720px]:mb-8">How it works.</h2>
+            <ol className="m-0 grid list-none gap-8 p-0 md:grid-cols-3">
+              {STEPS.map((s, i) => (
+                <li key={s.title}>
+                  <p className="ll-small ll-tabular m-0">0{i + 1}</p>
+                  <h3 className="ll-heading mt-2">{s.title}.</h3>
+                  <p className="ll-caption mt-2">{s.text}</p>
+                </li>
+              ))}
+            </ol>
+          </section>
+
+          <section id="questions" className="grid scroll-mt-8 items-start gap-8 pt-32 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] max-[720px]:pt-16">
+            <h2 className="ll-section-title">Questions.</h2>
+            <Accordion items={FAQ} />
+          </section>
+
+          <section className="relative mt-32 grid h-[340px] place-items-center overflow-hidden rounded-[var(--radius-lg)] bg-[var(--panel)] max-[720px]:mt-16">
+            <Pegboard />
+            <div className="relative"><OpenBoard size="lg" /></div>
+          </section>
         </div>
-      </section>
-    </div>
+      </main>
+
+      <footer className="ll-page flex flex-wrap items-start justify-between gap-6 py-16">
+        <span className="ll-wordmark">LendLoop</span>
+        <p className="ll-small m-0 max-w-[18em] text-right max-[720px]:text-left">
+          Made for neighbors who would rather borrow than buy.
+        </p>
+      </footer>
+    </>
   );
 }

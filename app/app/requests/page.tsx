@@ -1,9 +1,8 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { X } from "lucide-react";
 import { api } from "@/convex/_generated/api";
-import { LoanList } from "@/components/LoanList";
+import { RequestList } from "@/components/LoanList";
 import { Button, ErrorText, PageHeader, useAction } from "@/components/ui";
 
 export default function MyRequests() {
@@ -13,29 +12,26 @@ export default function MyRequests() {
   const history = loans?.filter((l) => l.status !== "pending" && l.status !== "approved");
 
   return (
-    <div className="space-y-10">
-      <div>
-        <PageHeader title="My requests" description="Tools you asked to borrow." />
-        <ErrorText error={cancel.error} />
-        <LoanList
-          loans={open}
-          perspective="borrower"
-          emptyTitle="No open requests"
-          emptyText="Browse tools and request one for the days you need it."
-          actions={(l) =>
-            l.status === "pending" ? (
-              <Button size="sm" variant="ghost" disabled={cancel.busy} onClick={() => cancel.run({ loanId: l._id })}>
-                <X className="h-3.5 w-3.5" /> Cancel request
-              </Button>
-            ) : null
-          }
-        />
-      </div>
+    <div>
+      <PageHeader title="My requests." lede="What you asked to borrow, and what you have right now." />
+      <ErrorText error={cancel.error} />
+      <RequestList
+        loans={open}
+        perspective="borrower"
+        empty={{ title: "Nothing borrowed yet.", text: "Find a tool on the board and ask for the days you need it." }}
+        actions={(l) =>
+          l.status === "pending" ? (
+            <Button size="sm" variant="quiet" disabled={cancel.busy} onClick={() => cancel.run({ loanId: l._id })}>
+              Cancel request
+            </Button>
+          ) : null
+        }
+      />
       {history && history.length > 0 && (
-        <div>
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500">History</h2>
-          <LoanList loans={history} perspective="borrower" emptyTitle="" />
-        </div>
+        <section className="ll-section">
+          <h2 className="ll-section-label">Earlier.</h2>
+          <RequestList loans={history} perspective="borrower" empty={{ title: "" }} />
+        </section>
       )}
     </div>
   );
