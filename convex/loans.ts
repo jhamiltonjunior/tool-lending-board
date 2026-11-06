@@ -125,9 +125,13 @@ async function present(ctx: QueryCtx, loan: Doc<"loans">) {
     ctx.db.query("automationEvents").withIndex("by_loan", (q) => q.eq("loanId", loan._id)).collect(),
   ]);
   const lastActivity = events.sort((a, b) => b._creationTime - a._creationTime)[0];
+  const today = todayUTC();
   return {
     _id: loan._id,
     toolName: tool?.name ?? "(removed tool)",
+    toolCategory: tool?.category ?? "other",
+    // approved but not started yet vs. already with the borrower
+    started: loan.startDate <= today,
     ownerName: owner?.name ?? "Unknown",
     ownerTrusted: owner?.trustedLender ?? false,
     borrowerName: borrower?.name ?? "Unknown",

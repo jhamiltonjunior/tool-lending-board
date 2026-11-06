@@ -18,12 +18,23 @@ function validateTool(input: { name: string; category: string; condition: string
   return { name, description, category: input.category, condition: input.condition };
 }
 
-async function isOnLoan(ctx: QueryCtx, toolId: Id<"tools">, today: string): Promise<boolean> {
+// The active loan (approved and already started), if any: the tool is with a borrower.
+async function activeLoan(ctx: QueryCtx, toolId: Id<"tools">, today: string): Promise<Doc<"loans"> | null> {
   const loans = await ctx.db
     .query("loans")
     .withIndex("by_tool", (q) => q.eq("toolId", toolId))
     .collect();
-  return loans.some((l) => l.status === "approved" && l.startDate <= today);
+  return loans.find((l) => l.status === "approved" && l.startDate <= today) ?? null;
+}
+
+async function isOnLoan(ctx: QueryCtx, toolId: Id<"tools">, today: string): Promise<boolean> {
+  return (await activeLoan(ctx, toolId, today)) !== null;
+}
+
+// How many times an owner has lent something (approved or completed loans).
+async function timesLent(ctx: QueryCtx, ownerId: Id<"users">): Promise<number> {
+  const loans = await ctx.db.query("loans").withIndex("by_owner", (q) => q.eq("ownerId", ownerId)).collect();
+  return loans.filter((l) => l.status === "approved" || l.status === "returned").length;
 }
 
 // Public, unauthenticated: name and category only. No owner, condition or description.
@@ -41,7 +52,7 @@ export const publicList = query({
 });
 
 async function withOwner(ctx: QueryCtx, t: Doc<"tools">, today: string) {
-  const owner = await ctx.db.get(t.ownerId);
+  const [owner, loan, lent] = await Promise.all([ctx.db.get(t.ownerId), activeLoan(ctx, t._id, today), timesLent(ctx, t.ownerId)]);
   return {
     _id: t._id,
     name: t.name,
@@ -51,7 +62,10 @@ async function withOwner(ctx: QueryCtx, t: Doc<"tools">, today: string) {
     ownerId: t.ownerId,
     ownerName: owner?.name ?? "Unknown",
     ownerTrusted: owner?.trustedLender ?? false,
-    available: !(await isOnLoan(ctx, t._id, today)),
+    ownerTimesLent: lent,
+    available: loan === null,
+    // When the tool is due back (YYYY-MM-DD), only while it is lent out.
+    backOn: loan?.endDate ?? null,
   };
 }
 
