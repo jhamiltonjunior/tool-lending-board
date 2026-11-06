@@ -97,7 +97,7 @@ export default function Browse() {
           {filtered.map((t) => {
             const mine = me && t.ownerId === me._id;
             return (
-              <Card key={t._id} className="flex flex-col">
+              <Card key={t._id} className="flex flex-col" interactive>
                 <div className="flex items-start gap-3">
                   <CategoryIcon category={t.category} />
                   <div className="min-w-0 flex-1">

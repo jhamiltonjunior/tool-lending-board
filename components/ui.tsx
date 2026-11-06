@@ -151,9 +151,12 @@ export function Activity({ activity }: { activity: { kind: string; at: number; d
   );
 }
 
-export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
+export function Card({ children, className = "", interactive = false }: { children: ReactNode; className?: string; interactive?: boolean }) {
+  const hover = interactive
+    ? "transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg hover:shadow-emerald-900/[0.06]"
+    : "";
   return (
-    <div className={`rounded-2xl border border-stone-200/80 bg-white p-5 shadow-sm shadow-stone-900/[0.03] ${className}`}>
+    <div className={`rounded-2xl border border-stone-200/80 bg-white p-5 shadow-sm shadow-stone-900/[0.03] ${hover} ${className}`}>
       {children}
     </div>
   );
@@ -168,14 +171,15 @@ export function Button({
   const styles = {
     primary: "bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 focus-visible:outline-emerald-600",
     secondary: "bg-stone-900 text-white shadow-sm hover:bg-stone-700 focus-visible:outline-stone-900",
-    ghost: "bg-white text-stone-700 ring-1 ring-inset ring-stone-300 hover:bg-stone-50 focus-visible:outline-stone-400",
+    ghost:
+      "bg-white text-stone-700 ring-1 ring-inset ring-stone-300 hover:bg-emerald-50 hover:text-emerald-800 hover:ring-emerald-300 focus-visible:outline-emerald-600",
     danger: "bg-white text-rose-700 ring-1 ring-inset ring-rose-300 hover:bg-rose-50 focus-visible:outline-rose-500",
   }[variant];
   const sizes = { sm: "px-2.5 py-1.5 text-xs", md: "px-3.5 py-2 text-sm" }[size];
   return (
     <button
       {...props}
-      className={`inline-flex items-center justify-center gap-1.5 rounded-xl font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${sizes} ${styles} ${props.className ?? ""}`}
+      className={`inline-flex items-center justify-center gap-1.5 rounded-xl font-medium transition active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${sizes} ${styles} ${props.className ?? ""}`}
     >
       {children}
     </button>

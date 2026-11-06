@@ -65,7 +65,7 @@ export default function Home() {
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {tools.map((t) => (
-              <li key={t._id} className="flex items-center gap-3 rounded-2xl border border-stone-200/80 bg-white p-4 shadow-sm shadow-stone-900/[0.03]">
+              <li key={t._id} className="flex items-center gap-3 rounded-2xl border border-stone-200/80 bg-white p-4 shadow-sm shadow-stone-900/[0.03] transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg hover:shadow-emerald-900/[0.06]">
                 <CategoryIcon category={t.category} />
                 <div className="min-w-0">
                   <p className="truncate font-medium text-stone-900">{t.name}</p>

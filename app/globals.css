@@ -8,3 +8,10 @@
 body {
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
 }
+
+/* Tailwind v4 resets buttons to the default cursor; restore the pointer affordance. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+select {
+  cursor: pointer;
+}

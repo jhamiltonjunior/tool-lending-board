@@ -26,7 +26,7 @@ export function LoanList({
   return (
     <div className="space-y-3">
       {loans.map((l) => (
-        <Card key={l._id} className={l.overdue ? "border-rose-200 bg-rose-50/40" : ""}>
+        <Card key={l._id} interactive className={l.overdue ? "border-rose-200 bg-rose-50/40" : ""}>
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="min-w-0 space-y-1.5">
               <div className="flex flex-wrap items-center gap-2">
