@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high
@@ -53,7 +53,7 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
       - if: steps.config.outputs.ready == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - if: steps.config.outputs.ready == 'true'
         uses: actions/setup-node@v5
         with:
