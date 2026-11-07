@@ -31,6 +31,7 @@ A neighborhood tool-lending board with authenticated listings, date-range borrow
 - [Getting started](#getting-started)
 - [Environment variables](#environment-variables)
 - [Testing](#testing)
+- [CI/CD](#cicd)
 - [Project structure](#project-structure)
 - [Running in production](#running-in-production)
 
@@ -380,6 +381,38 @@ docker compose exec -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id=LendLoo
 | n8n offline during a status change | 5 retries, then `notification_failed` on the loan | ✅ |
 | Failing workflow node | `workflow_error` recorded and visible to admins | ✅ |
 
+## CI/CD
+
+GitHub Actions, in `.github/workflows/`:
+
+```mermaid
+flowchart LR
+    PR[Pull request] --> C1[Checks] --> PV[Preview: Convex pr-N backend<br/>+ Vercel preview, URL commented on the PR]
+    PR --> DR[Dependency review]
+    M[Push to main] --> C2[Checks] --> BE[Convex deploy] --> WEB[Vercel production]
+    BE --> AUT[n8n workflows via API]
+```
+
+| Pipeline | Runs on | What it does |
+|---|---|---|
+| `checks.yml` | Called by the two below | Lint, typecheck, tests; n8n workflow JSON has no inline secrets; Compose file is valid; Next.js build |
+| `pull-request.yml` | Every PR to `main` | Checks, dependency review (fails on high-severity advisories), preview deployment with its own seeded Convex backend |
+| `deploy.yml` | Push to `main`, or manually | Checks, then Convex functions and schema, then the web app and the n8n workflows. One deploy at a time |
+
+Every job that needs credentials checks for them first and **skips with a notice** when they are missing, so the pipelines are green on a fresh fork. To turn each part on:
+
+| Name | Kind | Enables |
+|---|---|---|
+| `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Variable | Build step in checks |
+| `CONVEX_DEPLOY_KEY` | Secret (`production` environment) | Convex deploy |
+| `CONVEX_PREVIEW_DEPLOY_KEY` | Secret (`preview` environment) | Per-PR backends |
+| `VERCEL_TOKEN` | Secret | Web deploy and previews |
+| `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | Variable | Web deploy and previews |
+| `N8N_API_URL` | Variable | n8n workflow deploy |
+| `N8N_API_KEY` | Secret (`production` environment) | n8n workflow deploy |
+
+Convex env vars (`CLERK_JWT_ISSUER_DOMAIN`, `LENDLOOP_WEBHOOK_SECRET`, ...) are set once in the Convex dashboard, including the defaults for preview deployments. The n8n deploy only **updates** workflows that already exist, so the first import is the manual one from [Start n8n](#4-start-n8n). Dependabot opens weekly update PRs for npm packages and actions.
+
 ## Project structure
 
 ```
@@ -400,7 +433,8 @@ docker compose exec -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id=LendLoo
 │   ├── automation.ts       Overdue query and idempotent write-backs
 │   └── http.ts             HMAC-verified endpoints for n8n
 ├── n8n/workflows/          Exported workflows (no secrets)
-├── scripts/                Signed request helper
+├── scripts/                Signed request helper, n8n workflow check and deploy
+├── .github/                CI/CD pipelines and Dependabot
 └── docker-compose.yml      n8n
 ```
 
@@ -413,5 +447,5 @@ docker compose exec -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id=LendLoo
 - **n8n at scale.** Postgres instead of SQLite, queue mode with workers, HTTPS and network allow-listing between Convex and n8n.
 - **Time zones.** Store each user's time zone and send reminders in their local morning.
 - **Performance.** Paginate list queries, add indexes for admin views, and denormalize tool availability.
-- **Quality.** An end-to-end signed round trip against a real n8n in CI, and centralized logs with alerts on `workflow_error` and `notification_failed`.
+- **Quality.** An end-to-end signed round trip against a real n8n container in CI, and centralized logs with alerts on `workflow_error` and `notification_failed`.
 - **Privacy.** Per-user rate limits, an audit log for admin actions, and account deletion that anonymizes loan history.
