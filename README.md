@@ -30,7 +30,7 @@ A neighborhood tool-lending board with authenticated listings, date-range borrow
 - [Security and data minimization](#security-and-data-minimization)
 - [Getting started](#getting-started)
 - [Environment variables](#environment-variables)
-- [Testing the integration](#testing-the-integration)
+- [Testing](#testing)
 - [Project structure](#project-structure)
 - [Running in production](#running-in-production)
 
@@ -340,7 +340,26 @@ The n8n editor is available at http://localhost:5678.
 | `.env.n8n` | `LENDLOOP_WEBHOOK_SECRET` | Same shared secret |
 | `.env.n8n` | `LENDLOOP_CONVEX_SITE_URL` | Convex HTTP actions base URL, as seen from the container |
 
-## Testing the integration
+## Testing
+
+### Automated tests
+
+```bash
+npm test          # 40 tests, no external services needed
+npm run typecheck
+```
+
+The suite runs every Convex function against an in-memory backend (`convex-test`):
+
+| File | What it proves |
+|---|---|
+| `convex/users.test.ts` | Roles come only from `ADMIN_EMAILS`; only admins list users and mark Trusted Lenders |
+| `convex/tools.test.ts` | Public list leaks no owner data; validation; only owners edit or delete; admin removal; no deleting a tool that is lent out |
+| `convex/loans.test.ts` | Date rules, no borrowing your own tool, no overlapping approvals, who can approve, decline, return and cancel, and who gets notified |
+| `convex/automation.test.ts` | Unsigned, forged, stale and cross-endpoint calls get `401`; reminders are idempotent; notifications are signed and minimal; 5 retries, then `notification_failed` |
+| `convex/hmac.test.ts` | Signature, tampering, replay and tolerance rules |
+
+### Manual integration check
 
 ```bash
 export LENDLOOP_WEBHOOK_SECRET=<same secret>
@@ -370,6 +389,7 @@ docker compose exec -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id=LendLoo
 │   └── app/                Signed-in area (browse, listings, requests, incoming, admin)
 ├── components/             UI building blocks and the app shell
 ├── convex/
+│   ├── *.test.ts           Automated tests (never deployed)
 │   ├── schema.ts           Data model
 │   ├── lib/auth.ts         requireUser / requireAdmin
 │   ├── lib/hmac.ts         Signing and verification
@@ -393,5 +413,5 @@ docker compose exec -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id=LendLoo
 - **n8n at scale.** Postgres instead of SQLite, queue mode with workers, HTTPS and network allow-listing between Convex and n8n.
 - **Time zones.** Store each user's time zone and send reminders in their local morning.
 - **Performance.** Paginate list queries, add indexes for admin views, and denormalize tool availability.
-- **Quality.** `convex-test` coverage for every authorization rule, an end-to-end signed round trip in CI, and centralized logs with alerts on `workflow_error` and `notification_failed`.
+- **Quality.** An end-to-end signed round trip against a real n8n in CI, and centralized logs with alerts on `workflow_error` and `notification_failed`.
 - **Privacy.** Per-user rate limits, an audit log for admin actions, and account deletion that anonymizes loan history.
