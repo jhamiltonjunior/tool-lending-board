@@ -1,0 +1,121 @@
+# Production pipeline: checks, then Convex, then the web app and the n8n workflows.
+# Each deploy job skips itself (with a notice) until its secrets are configured.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+  backend:
+    name: Convex functions and schema
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+    outputs:
+      deployed: ${{ steps.config.outputs.ready }}
+    steps:
+      - name: Check configuration
+        id: config
+        run: |
+          if [ -z "$CONVEX_DEPLOY_KEY" ]; then
+            echo "::notice::Convex deploy skipped: CONVEX_DEPLOY_KEY is not configured."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.config.outputs.ready == 'true'
+        uses: actions/checkout@v5
+      - if: steps.config.outputs.ready == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - if: steps.config.outputs.ready == 'true'
+        run: npm ci
+      # Pushes functions and schema; Convex validates existing data against the schema first.
+      - if: steps.config.outputs.ready == 'true'
+        run: npx convex deploy --message "${{ github.sha }}"
+
+  web:
+    name: Next.js on Vercel
+    # Ship the UI only after the backend it calls is live.
+    needs: backend
+    if: needs.backend.outputs.deployed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Check configuration
+        id: config
+        run: |
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_ORG_ID" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::notice::Web deploy skipped: VERCEL_TOKEN, VERCEL_ORG_ID and VERCEL_PROJECT_ID are not configured."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.config.outputs.ready == 'true'
+        uses: actions/checkout@v5
+      - if: steps.config.outputs.ready == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - if: steps.config.outputs.ready == 'true'
+        run: npm ci
+      - if: steps.config.outputs.ready == 'true'
+        id: deploy
+        run: |
+          npx vercel@65.12.1 pull --yes --environment=production --token="$VERCEL_TOKEN"
+          npx vercel@65.12.1 build --prod --token="$VERCEL_TOKEN"
+          echo "url=$(npx vercel@65.12.1 deploy --prebuilt --prod --token="$VERCEL_TOKEN")" >> "$GITHUB_OUTPUT"
+
+  automation:
+    name: n8n workflows
+    needs: backend
+    if: needs.backend.outputs.deployed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      N8N_API_URL: ${{ vars.N8N_API_URL }}
+      N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+    steps:
+      - name: Check configuration
+        id: config
+        run: |
+          if [ -z "$N8N_API_URL" ] || [ -z "$N8N_API_KEY" ]; then
+            echo "::notice::n8n deploy skipped: N8N_API_URL and N8N_API_KEY are not configured."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.config.outputs.ready == 'true'
+        uses: actions/checkout@v5
+      - if: steps.config.outputs.ready == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+      - if: steps.config.outputs.ready == 'true'
+        run: node scripts/check-n8n-workflows.mjs && node scripts/deploy-n8n-workflows.mjs
