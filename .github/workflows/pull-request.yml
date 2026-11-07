@@ -1,0 +1,80 @@
+name: Pull request
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
+  preview:
+    name: Preview deployment
+    needs: checks
+    # Secrets are not available to pull requests from forks.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    environment: preview
+    env:
+      # Convex preview deploy key: one isolated backend per pull request.
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PREVIEW_DEPLOY_KEY }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Check preview configuration
+        id: config
+        run: |
+          if [ -z "$CONVEX_DEPLOY_KEY" ] || [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_ORG_ID" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::notice::Preview skipped: CONVEX_PREVIEW_DEPLOY_KEY, VERCEL_TOKEN, VERCEL_ORG_ID and VERCEL_PROJECT_ID are not configured."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.config.outputs.ready == 'true'
+        uses: actions/checkout@v5
+      - if: steps.config.outputs.ready == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - if: steps.config.outputs.ready == 'true'
+        run: npm ci
+      - if: steps.config.outputs.ready == 'true'
+        name: Build against a fresh Convex preview backend with demo data
+        run: |
+          npx vercel@65.12.1 pull --yes --environment=preview --token="$VERCEL_TOKEN"
+          npx convex deploy \
+            --preview-create "pr-${{ github.event.pull_request.number }}" \
+            --preview-run seed:demo \
+            --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL \
+            --cmd "npx vercel@65.12.1 build --token=$VERCEL_TOKEN"
+      - if: steps.config.outputs.ready == 'true'
+        name: Deploy and comment the URL on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          url=$(npx vercel@65.12.1 deploy --prebuilt --token="$VERCEL_TOKEN")
+          gh pr comment "${{ github.event.pull_request.number }}" --edit-last --create-if-none \
+            --body "Preview: $url (Convex backend \`pr-${{ github.event.pull_request.number }}\`, seeded with demo data)"
