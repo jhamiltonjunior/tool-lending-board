@@ -1,3 +1,4 @@
+import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
@@ -46,9 +47,10 @@ async function clearSeed(ctx: MutationCtx) {
 // Demo neighborhood for local testing. Idempotent: it replaces previous demo data.
 // Includes one tool lent out, one overdue loan (for the reminder workflow), a pending
 // request and some history. Internal only: `npx convex run seed:demo`.
+// `npx convex run seed:demo '{"extraTools": 40}'` adds filler tools to try paging.
 export const demo = internalMutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { extraTools: v.optional(v.number()) },
+  handler: async (ctx, { extraTools = 0 }) => {
     await clearSeed(ctx);
     const user: Record<string, Id<"users">> = {};
     for (const n of NEIGHBORS) {
@@ -68,6 +70,17 @@ export const demo = internalMutation({
         category: t.category,
         condition: t.condition,
         description: t.description,
+      });
+    }
+    const owners = NEIGHBORS.map((n) => n.key);
+    const categories = [...new Set(TOOLS.map((t) => t.category))];
+    for (let i = 1; i <= Math.min(Math.max(0, extraTools), 100); i++) {
+      await ctx.db.insert("tools", {
+        ownerId: user[owners[i % owners.length]],
+        name: `Spare tool ${i}`,
+        category: categories[i % categories.length],
+        condition: "good",
+        description: "Filler listing for trying out paging.",
       });
     }
     const loan = (name: string, owner: string, borrower: string, start: number, end: number, status: "pending" | "approved" | "returned") =>

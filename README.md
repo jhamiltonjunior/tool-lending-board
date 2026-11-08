@@ -345,7 +345,8 @@ npx convex env set LENDLOOP_WEBHOOK_SECRET "$SECRET"
 npx convex env set N8N_LOAN_EVENTS_WEBHOOK_URL http://localhost:5678/webhook/lendloop-loan-events
 npx convex env set ADMIN_EMAILS you@example.com
 npx convex run seed:demo    # optional: five neighbors, seven tools, a late loan and a pending request
-                            # (re-running replaces it; `seed:reset` removes it)
+                            # (re-running replaces it; `seed:reset` removes it;
+                            #  '{"extraTools": 40}' adds filler tools to try paging)
 ```
 
 ### 4. Start n8n
