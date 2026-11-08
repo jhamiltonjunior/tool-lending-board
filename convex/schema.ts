@@ -30,6 +30,9 @@ export default defineSchema({
     trustedLender: v.boolean(),
     // Approved loans as owner, kept up to date on approval so lists never count loans.
     timesLent: v.optional(v.number()),
+    // Clerk's updated_at for the profile data stored here, so a stale session token
+    // never overwrites a newer name.
+    profileUpdatedAt: v.optional(v.number()),
   })
     .index("by_token", ["tokenIdentifier"])
     .index("by_email", ["email"]),

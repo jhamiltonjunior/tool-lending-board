@@ -344,6 +344,7 @@ npx convex env set CLERK_JWT_ISSUER_DOMAIN https://<your-instance>.clerk.account
 npx convex env set LENDLOOP_WEBHOOK_SECRET "$SECRET"
 npx convex env set N8N_LOAN_EVENTS_WEBHOOK_URL http://localhost:5678/webhook/lendloop-loan-events
 npx convex env set ADMIN_EMAILS you@example.com
+npx convex env set CLERK_SECRET_KEY sk_test_...   # optional: renames show up at once
 npx convex run seed:demo    # optional: five neighbors, seven tools, a late loan and a pending request
                             # (re-running replaces it; `seed:reset` removes it;
                             #  '{"extraTools": 40}' adds filler tools to try paging)
@@ -384,6 +385,7 @@ The n8n editor is available at http://localhost:5678.
 | Convex env | `LENDLOOP_WEBHOOK_SECRET` | Shared HMAC secret (32+ characters) |
 | Convex env | `N8N_LOAN_EVENTS_WEBHOOK_URL` | n8n webhook that receives loan events |
 | Convex env | `ADMIN_EMAILS` | Comma-separated emails promoted to admin on sign-in |
+| Convex env | `CLERK_SECRET_KEY` | Optional. Lets the server read a renamed profile from Clerk at once instead of waiting for the next session token |
 | `.env.n8n` | `N8N_ENCRYPTION_KEY` | Encrypts credentials stored by n8n |
 | `.env.n8n` | `LENDLOOP_WEBHOOK_SECRET` | Same shared secret |
 | `.env.n8n` | `LENDLOOP_CONVEX_SITE_URL` | Convex HTTP actions base URL, as seen from the container |
@@ -393,7 +395,7 @@ The n8n editor is available at http://localhost:5678.
 ### Automated tests
 
 ```bash
-npm test          # 52 tests, no external services needed
+npm test          # 56 tests, no external services needed
 npm run typecheck
 ```
 
