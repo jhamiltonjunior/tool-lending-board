@@ -58,10 +58,10 @@ Every automation result is written back to the app, so each loan shows its lates
 | Area | Capabilities |
 |---|---|
 | **Public page** | Tagline, read-only list of tools available now (**name and category only**, no owner data), sign-in |
-| **Browse** | All tools with availability status, category filter and search, borrow request with a date range |
+| **Browse** | All tools with availability status, category filter and server-side search, borrow request with a date range that shows the dates already booked; your pending request stays visible on the tool |
 | **My listings** | Create, edit and delete your own tools |
-| **My requests** | Your requests grouped by state, cancel while pending, latest automation activity |
-| **Incoming** | Approve or decline requests for your tools, mark loans as returned |
+| **My requests** | Your requests grouped by state, cancel while pending, report a tool as returned, latest automation activity |
+| **Incoming** | Approve or decline requests for your tools; mark loans as returned, or confirm or dispute a return the borrower reported |
 | **Admin** | Platform stats, remove any listing, view all loans, mark **Trusted Lenders**, review failed automation runs |
 
 ## Architecture
@@ -144,7 +144,7 @@ sequenceDiagram
     Note over CX,N8N: Not delivered? The event stays in the outbox<br/>and the worker retries it (see below)
 ```
 
-**Who is notified:** a new request goes to the **owner**; approved, declined and returned go to the **borrower**; a cancellation goes to the **owner**.
+**Who is notified:** a new request, a cancellation and a reported return go to the **owner**; approved, declined, returned and a disputed return go to the **borrower**.
 
 ### Daily overdue reminder
 
@@ -276,6 +276,7 @@ stateDiagram-v2
     pending --> cancelled: borrower cancels
     approved --> returned: owner marks returned
     approved --> approved: overdue → daily reminder
+    approved --> approved: borrower reports it back<br/>(reminders stop; owner confirms or disputes)
     declined --> [*]
     cancelled --> [*]
     returned --> [*]
@@ -294,6 +295,8 @@ All rules are enforced **inside Convex functions** (`convex/lib/auth.ts`), so ca
 | Request to borrow | not own tools | not own tools | `loans.request` |
 | Approve, decline, mark returned | own tools only | own tools only | `loans.*` check `loan.ownerId` |
 | Cancel a request | own requests only | own requests only | `loans.cancel` checks `loan.borrowerId` |
+| Report a tool as returned | own loans only, once started | own loans only, once started | `loans.reportReturned` checks `loan.borrowerId` |
+| Confirm or dispute a reported return | own tools only | own tools only | `loans.markReturned` / `loans.disputeReturn` check `loan.ownerId` |
 | View all loans | ❌ | ✅ | `loans.all` → `requireAdmin` |
 | Mark Trusted Lender | ❌ | ✅ | `users.setTrustedLender` → `requireAdmin` |
 
@@ -395,7 +398,7 @@ The n8n editor is available at http://localhost:5678.
 ### Automated tests
 
 ```bash
-npm test          # 56 tests, no external services needed
+npm test          # 59 tests, no external services needed
 npm run typecheck
 ```
 
