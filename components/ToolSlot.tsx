@@ -5,7 +5,7 @@ import type { FunctionReturnType } from "convex/server";
 import type { api } from "@/convex/_generated/api";
 import { Caption, daysLate, DueTag, formatDate, label, ToolGlyph } from "@/components/ui";
 
-export type Tool = FunctionReturnType<typeof api.tools.list>[number];
+export type Tool = FunctionReturnType<typeof api.tools.list>["page"][number];
 
 /**
  * One tool on the board. Available: a filled panel row with "Available".

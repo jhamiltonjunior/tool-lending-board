@@ -1,13 +1,26 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useState } from "react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { Button, CategoryFilter, Empty, ErrorText, Field, Loading, PageHeader, SearchField, useAction } from "@/components/ui";
+import {
+  Button,
+  CategoryFilter,
+  Empty,
+  ErrorText,
+  Field,
+  Loading,
+  LoadMore,
+  PageHeader,
+  SearchField,
+  useAction,
+  useDebounced,
+} from "@/components/ui";
 import { OwnerLine, ToolSlot } from "@/components/ToolSlot";
 
 const today = () => new Date().toISOString().slice(0, 10);
+const PAGE_SIZE = 20;
 
 function RequestForm({ toolId, onDone, onCancel }: { toolId: Id<"tools">; onDone: () => void; onCancel: () => void }) {
   const [startDate, setStart] = useState(today());
@@ -39,28 +52,26 @@ function RequestForm({ toolId, onDone, onCancel }: { toolId: Id<"tools">; onDone
 export default function Board() {
   const [category, setCategory] = useState("");
   const [search, setSearch] = useState("");
-  const tools = useQuery(api.tools.list, {});
+  // Filtering and search run on the server, one page at a time.
+  const query = useDebounced(search.trim());
+  const { results, status, loadMore } = usePaginatedQuery(
+    api.tools.list,
+    { category: category || undefined, search: query || undefined },
+    { initialNumItems: PAGE_SIZE },
+  );
+  const stats = useQuery(api.tools.stats);
   const me = useQuery(api.users.me);
   const [requesting, setRequesting] = useState<Id<"tools"> | null>(null);
   const [sent, setSent] = useState<Set<string>>(new Set());
 
-  const counts = useMemo(() => {
-    const c: Record<string, number> = { "": tools?.length ?? 0 };
-    for (const t of tools ?? []) c[t.category] = (c[t.category] ?? 0) + 1;
-    return c;
-  }, [tools]);
-
-  const shown = tools?.filter(
-    (t) => (!category || t.category === category) && t.name.toLowerCase().includes(search.trim().toLowerCase()),
-  );
-  const free = tools?.filter((t) => t.available).length ?? 0;
-  const neighbors = new Set(tools?.map((t) => t.ownerId)).size;
+  const counts = stats ? { "": stats.total, ...stats.byCategory } : undefined;
+  const shown = status === "LoadingFirstPage" ? undefined : results;
 
   return (
     <div>
       <PageHeader
         title="The board."
-        lede={tools ? `${tools.length} tools from ${neighbors} neighbor${neighbors === 1 ? "" : "s"}, ${free} free right now.` : undefined}
+        lede={stats ? `${stats.total} tool${stats.total === 1 ? "" : "s"}, ${stats.free} free right now.` : undefined}
         side={<div className="w-[300px] max-w-full"><SearchField value={search} onChange={setSearch} /></div>}
       />
       <div className="mb-6">
@@ -101,6 +112,7 @@ export default function Board() {
           })}
         </ul>
       )}
+      <LoadMore status={status} onMore={() => loadMore(PAGE_SIZE)} />
     </div>
   );
 }

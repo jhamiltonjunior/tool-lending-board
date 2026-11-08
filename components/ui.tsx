@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ConvexError } from "convex/values";
-import { ComponentType, ReactNode, useId, useState } from "react";
+import { ComponentType, ReactNode, useEffect, useId, useState } from "react";
 import { CookingPot, Drill, Hammer, Package, Search, Shovel, SprayCan, Tent } from "lucide-react";
 
 export const CATEGORIES = ["power tools", "hand tools", "garden", "kitchen", "camping", "cleaning", "other"];
@@ -210,5 +210,27 @@ export function Accordion({ items }: { items: { q: string; a: ReactNode }[] }) {
         );
       })}
     </ul>
+  );
+}
+
+// The value after it has stopped changing for `ms`, so typing does not fire a query per key.
+export function useDebounced<T>(value: T, ms = 250): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(id);
+  }, [value, ms]);
+  return settled;
+}
+
+// "Load more" for paginated Convex queries.
+export function LoadMore({ status, onMore }: { status: string; onMore: () => void }) {
+  if (status !== "CanLoadMore" && status !== "LoadingMore") return null;
+  return (
+    <div className="mt-4 flex justify-center">
+      <Button size="sm" disabled={status === "LoadingMore"} onClick={onMore}>
+        {status === "LoadingMore" ? "Loading…" : "Load more"}
+      </Button>
+    </div>
   );
 }

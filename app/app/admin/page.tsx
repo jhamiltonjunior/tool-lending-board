@@ -1,9 +1,23 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { RequestList } from "@/components/LoanList";
-import { Button, Caption, Empty, ErrorText, label, Loading, PageHeader, timeAgo, ToolGlyph, useAction } from "@/components/ui";
+import {
+  Button,
+  Caption,
+  Empty,
+  ErrorText,
+  label,
+  Loading,
+  LoadMore,
+  PageHeader,
+  timeAgo,
+  ToolGlyph,
+  useAction,
+} from "@/components/ui";
+
+const PAGE_SIZE = 25;
 
 function Stat({ name, value }: { name: string; value: number | undefined }) {
   return (
@@ -18,12 +32,14 @@ export default function Admin() {
   const me = useQuery(api.users.me);
   const isAdmin = me?.role === "admin";
   // Queries are skipped for non-admins; the server rejects them anyway.
-  const users = useQuery(api.users.listForAdmin, isAdmin ? {} : "skip");
-  const tools = useQuery(api.tools.list, isAdmin ? {} : "skip");
-  const loans = useQuery(api.loans.all, isAdmin ? {} : "skip");
+  const stats = useQuery(api.stats.admin, isAdmin ? {} : "skip");
+  const users = usePaginatedQuery(api.users.listForAdmin, isAdmin ? {} : "skip", { initialNumItems: PAGE_SIZE });
+  const tools = usePaginatedQuery(api.tools.list, isAdmin ? {} : "skip", { initialNumItems: PAGE_SIZE });
+  const loans = usePaginatedQuery(api.loans.all, isAdmin ? {} : "skip", { initialNumItems: PAGE_SIZE });
   const problems = useQuery(api.automation.recentProblems, isAdmin ? {} : "skip");
   const trust = useAction(useMutation(api.users.setTrustedLender));
   const removeTool = useAction(useMutation(api.tools.adminRemove));
+  const resend = useAction(useMutation(api.notifications.resend));
 
   if (me === undefined) return <Loading />;
   if (!isAdmin) return <Empty title="Admins only.">Ask an admin if you need something changed on the board.</Empty>;
@@ -33,14 +49,21 @@ export default function Admin() {
       <PageHeader title="Admin." lede="Look after the board: listings, loans and who lends reliably." />
 
       <div className="ll-stats">
-        <Stat name="Neighbors" value={users?.length} />
-        <Stat name="Tools listed" value={tools?.length} />
-        <Stat name="Lent out now" value={loans?.filter((l) => l.status === "approved").length} />
-        <Stat name="Late" value={loans?.filter((l) => l.overdue).length} />
+        <Stat name="Neighbors" value={stats?.neighbors} />
+        <Stat name="Tools listed" value={stats?.tools} />
+        <Stat name="Lent out now" value={stats?.lentOut} />
+        <Stat name="Late" value={stats?.late} />
       </div>
 
       <section className="ll-section">
         <h2 className="ll-section-label">Automation.</h2>
+        {stats?.n8nDownSince && (
+          <p className="ll-caption" style={{ color: "var(--alert)" }}>
+            <strong>n8n is not answering</strong> (since {timeAgo(stats.n8nDownSince)}). Notifications are kept and
+            will go out on their own when it is back.
+          </p>
+        )}
+        <ErrorText error={resend.error} />
         {problems === undefined ? (
           <Loading />
         ) : problems.length === 0 ? (
@@ -50,7 +73,16 @@ export default function Admin() {
             {problems.map((p) => (
               <div key={p._id} className="ll-row">
                 <span className="ll-caption" style={{ color: "var(--alert)" }}>{p.detail}</span>
-                <span className="ll-small">{timeAgo(p.at)}</span>
+                <span className="flex items-center gap-3">
+                  <span className="ll-small">{timeAgo(p.at)}</span>
+                  {p.outboxId && p.outboxState === "dead" && (
+                    <Button size="sm" disabled={resend.busy} onClick={() => resend.run({ outboxId: p.outboxId! })}>
+                      Resend
+                    </Button>
+                  )}
+                  {p.outboxId && p.outboxState === "pending" && <span className="ll-small">Resending…</span>}
+                  {p.outboxId && p.outboxState === "delivered" && <span className="ll-small">Resent</span>}
+                </span>
               </div>
             ))}
           </div>
@@ -61,7 +93,7 @@ export default function Admin() {
         <h2 className="ll-section-label">Neighbors.</h2>
         <ErrorText error={trust.error} />
         <div className="ll-rows ll-on-panel">
-          {users?.map((u) => (
+          {users.results.map((u) => (
             <div key={u._id} className="ll-row">
               <span className="ll-caption">
                 <strong>{u.name}</strong> {u.email}{u.role === "admin" ? ", admin" : ""}{u.trustedLender ? ", trusted lender" : ""}.
@@ -72,16 +104,17 @@ export default function Admin() {
             </div>
           ))}
         </div>
+        <LoadMore status={users.status} onMore={() => users.loadMore(PAGE_SIZE)} />
       </section>
 
       <section className="ll-section">
         <h2 className="ll-section-label">Tools.</h2>
         <ErrorText error={removeTool.error} />
-        {tools?.length === 0 ? (
+        {tools.status === "Exhausted" && tools.results.length === 0 ? (
           <Empty title="Nothing listed yet." />
         ) : (
           <div className="ll-rows ll-on-panel">
-            {tools?.map((t) => (
+            {tools.results.map((t) => (
               <div key={t._id} className="ll-row">
                 <span className="flex min-w-0 items-center gap-3">
                   <ToolGlyph category={t.category} size={20} />
@@ -94,11 +127,17 @@ export default function Admin() {
             ))}
           </div>
         )}
+        <LoadMore status={tools.status} onMore={() => tools.loadMore(PAGE_SIZE)} />
       </section>
 
       <section className="ll-section">
         <h2 className="ll-section-label">Loans.</h2>
-        <RequestList loans={loans} perspective="admin" empty={{ title: "No loans yet." }} />
+        <RequestList
+          loans={loans.status === "LoadingFirstPage" ? undefined : loans.results}
+          perspective="admin"
+          empty={{ title: "No loans yet." }}
+        />
+        <LoadMore status={loans.status} onMore={() => loans.loadMore(PAGE_SIZE)} />
       </section>
     </div>
   );
