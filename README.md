@@ -300,7 +300,7 @@ All rules are enforced **inside Convex functions** (`convex/lib/auth.ts`), so ca
 | View all loans | ❌ | ✅ | `loans.all` → `requireAdmin` |
 | Mark Trusted Lender | ❌ | ✅ | `users.setTrustedLender` → `requireAdmin` |
 
-Roles are **never taken from the client**. A user becomes admin only if their email is listed in the `ADMIN_EMAILS` Convex environment variable, or through the operator-only internal mutation `users:setRole`.
+Roles are **never taken from the client**. A user becomes admin only if their **verified** email is listed in the `ADMIN_EMAILS` Convex environment variable, or through the operator-only internal mutation `users:setRole`.
 
 ## Security and data minimization
 
@@ -311,7 +311,23 @@ Roles are **never taken from the client**. A user becomes admin only if their em
 | **Idempotency** | Reminders are keyed by `loanId:day`, and a success is never downgraded. Notification records are keyed by `eventKey`. Retries and repeated schedule runs are no-ops. |
 | **No silent failures** | Notifications go through a transactional outbox with retries, a circuit breaker and a 24-hour window, then `notification_failed` with a Resend button for admins. n8n HTTP nodes retry 3 times, and any failed execution reaches the error workflow, which records a `workflow_error`. |
 | **Data minimization** | n8n receives only what one notification needs: recipient name and email, tool name, dates and status. It never gets user ids, roles or other users' data. The public page exposes no owner information. |
-| **Input validation** | Field lengths, allowed categories and conditions, date format and range (no past dates, at most 60 days), and shape and size checks on every HTTP payload. |
+| **Input validation** | Field lengths, allowed categories and conditions, date format and range (no past dates, at most 60 days, starting at most a year ahead), names capped at 80 characters, and shape and size checks on every HTTP payload. |
+| **Cost limits** | Page sizes are capped at 100 on the server whatever the client asks for. Reading a profile from Clerk is limited to once every 30 seconds per user. |
+| **Browser** | Every response sends `frame-ancestors 'none'` and `X-Frame-Options: DENY` (no clickjacking), `nosniff`, a strict referrer policy, a permissions policy and HSTS. |
+
+### Security review
+
+A review of the whole project (November 2026) found five gaps, all fixed with tests:
+
+| Finding | Risk | Fix |
+|---|---|---|
+| Admin rights were granted to a listed email without checking it was verified | Medium-high | Admin only for a verified email |
+| The client chose the page size, so one call could ask for 100,000 rows | Medium | Server-side cap of 100 per page |
+| The app could be framed by another site (clickjacking on "Approve" or "Remove"), and standard security headers were missing | Medium | Security headers on every response |
+| The "read my profile from Clerk" call had no limit, so a client could exhaust the Clerk API quota | Low-medium | Once every 30 seconds per user |
+| A request could start in any future year, and names from Clerk had no length limit | Low | At most a year ahead; names capped at 80 characters |
+
+Still open, for production: see **Rate limits**, **Session length**, **Admin removal** and **n8n exposure** in [Running in production](#running-in-production). No secret has ever been committed (git history checked).
 
 ## Getting started
 
@@ -398,7 +414,7 @@ The n8n editor is available at http://localhost:5678.
 ### Automated tests
 
 ```bash
-npm test          # 59 tests, no external services needed
+npm test          # 63 tests, no external services needed
 npm run typecheck
 ```
 
@@ -501,9 +517,13 @@ After deploying a version that adds stored counters to a deployment that already
 - **Delivery alerts.** Page someone when n8n has been marked down for more than a few minutes, not only show it in the admin panel.
 - **Secret management.** Rotate with two active secrets and a key id header, inject secrets through n8n external secrets, and set `N8N_BLOCK_ENV_ACCESS_IN_NODE=true`.
 - **Replay protection.** Store recent signatures for the tolerance window and reject repeats.
+- **Rate limits.** Per-user limits on creating requests and listings (for example with the Convex rate-limiter component).
+- **Session length.** The Clerk `convex` JWT template issues tokens valid for an hour, so a user banned in Clerk keeps access until it expires (admin rights are checked in the database on every call, so those are revoked at once). Use a 60-second lifetime; Convex refreshes tokens automatically.
+- **Admin removal.** Taking an email off `ADMIN_EMAILS` does not demote someone who is already admin; that is done with `users:setRole`. Sync roles on every sign-in if the list changes often.
+- **n8n exposure.** Compose publishes port 5678 on every interface for local use. In production, bind the editor to localhost or a private network and expose only the webhook path through a reverse proxy.
 - **n8n at scale.** Postgres instead of SQLite, queue mode with workers, HTTPS and network allow-listing between Convex and n8n.
 - **Time zones.** Store each user's time zone and send reminders in their local morning.
 - **Reminder schedule.** Trigger the daily reminder from a Convex cron (or have n8n catch up missed days), so an n8n outage at 09:00 does not skip a day.
 - **Quality.** An end-to-end signed round trip against a real n8n container in CI, and centralized logs with alerts on `workflow_error` and `notification_failed`.
 - **Loan history.** Each loan keeps only its current state: when an owner answers "Not back yet", the reported return is cleared and the disagreement is not recorded. An append-only `loanEvents` table (loan, actor, action, time), written in the same mutation as each change, would give owners, borrowers and admins a timeline to settle disputes.
-- **Privacy.** Per-user rate limits, an audit log for admin actions, and account deletion that anonymizes loan history.
+- **Privacy.** An audit log for admin actions, and account deletion that anonymizes loan history.
