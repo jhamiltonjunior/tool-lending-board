@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ReactNode, useEffect, useState } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
-import { UserButton } from "@clerk/nextjs";
+import { UserButton, useUser } from "@clerk/nextjs";
 import { api } from "@/convex/_generated/api";
 import { Loading } from "@/components/ui";
 
@@ -29,6 +29,22 @@ export default function AppShell({ children }: { children: ReactNode }) {
     if (!isAuthenticated) return;
     store().then(() => setStored(true));
   }, [isAuthenticated, store]);
+
+  // A name changed in the Clerk profile reaches Convex inside the next session token,
+  // which can take up to a minute. Re-sync for a short while until it lands.
+  const { user } = useUser();
+  const profileName = user?.fullName?.trim() || user?.username || null;
+  const outOfSync = stored && me !== undefined && me !== null && profileName !== null && me.name !== profileName;
+  useEffect(() => {
+    if (!outOfSync) return;
+    let tries = 0;
+    const id = setInterval(() => {
+      if (++tries > 8) clearInterval(id);
+      else void store();
+    }, 15_000);
+    void store();
+    return () => clearInterval(id);
+  }, [outOfSync, store]);
 
   const nav = me?.role === "admin" ? [...NAV, { href: "/app/admin", label: "Admin" }] : NAV;
   const links = nav.map((n) => (

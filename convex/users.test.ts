@@ -12,6 +12,21 @@ describe("users", () => {
     expect(await as.query(api.users.me, {})).toMatchObject({ name: "Ana", role: "user", trustedLender: false });
   });
 
+  it("never uses the email as the display name", async () => {
+    const t = setup();
+    const as = t.withIdentity({ email: "secret.person@example.com", subject: "x" });
+    await as.mutation(api.users.store, {});
+    expect(await as.query(api.users.me, {})).toMatchObject({ name: "Neighbor" });
+  });
+
+  it("picks up a name changed in the identity provider", async () => {
+    const t = setup();
+    await t.withIdentity({ email: "a@example.com", subject: "a" }).mutation(api.users.store, {});
+    const renamed = t.withIdentity({ name: "Hamilton Test", email: "a@example.com", subject: "a" });
+    await renamed.mutation(api.users.store, {});
+    expect(await renamed.query(api.users.me, {})).toMatchObject({ name: "Hamilton Test" });
+  });
+
   it("promotes emails listed in ADMIN_EMAILS, case-insensitively", async () => {
     const t = setup();
     const { as } = await signIn(t, "Admin", ADMIN_EMAIL);

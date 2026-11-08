@@ -20,7 +20,8 @@ export const store = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Not signed in");
     const email = identity.email ?? "";
-    const name = identity.name ?? identity.nickname ?? email.split("@")[0] ?? "Neighbor";
+    // Never derive a display name from the email: other neighbors see this name.
+    const name = identity.name?.trim() || identity.nickname?.trim() || "Neighbor";
     const existing = await currentUser(ctx);
     if (existing) {
       const patch: Record<string, unknown> = {};
