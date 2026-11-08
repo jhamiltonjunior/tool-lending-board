@@ -15,6 +15,7 @@ import type * as http from "../http.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_board from "../lib/board.js";
 import type * as lib_hmac from "../lib/hmac.js";
+import type * as lib_pagination from "../lib/pagination.js";
 import type * as lib_singletons from "../lib/singletons.js";
 import type * as loans from "../loans.js";
 import type * as notifications from "../notifications.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/board": typeof lib_board;
   "lib/hmac": typeof lib_hmac;
+  "lib/pagination": typeof lib_pagination;
   "lib/singletons": typeof lib_singletons;
   loans: typeof loans;
   notifications: typeof notifications;

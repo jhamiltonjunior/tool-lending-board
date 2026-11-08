@@ -129,6 +129,19 @@ describe("board pages, search and counters", () => {
     return { t, ana, bob, drill, sander, tent };
   }
 
+  it("caps the page size on the server", async () => {
+    const { t, bob } = await board();
+    await t.run(async (ctx) => {
+      const owner = (await ctx.db.query("users").collect()).find((u) => u.name === "Ana")!;
+      for (let i = 0; i < 110; i++) {
+        await ctx.db.insert("tools", { ownerId: owner._id, name: `Tool ${i}`, category: "other", condition: "good", description: "" });
+      }
+    });
+    const page = await bob.as.query(api.tools.list, firstPage(100_000));
+    expect(page.page).toHaveLength(100);
+    expect(page.isDone).toBe(false);
+  });
+
   it("pages through the board", async () => {
     const { bob } = await board();
     const first = await bob.as.query(api.tools.list, firstPage(2));
