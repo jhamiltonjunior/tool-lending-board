@@ -57,6 +57,31 @@ describe("users", () => {
     expect(await as.action(api.users.refreshProfile, {})).toMatchObject({ updated: false });
   });
 
+  it("does not grant admin to an unverified email, even if it is listed", async () => {
+    const t = setup();
+    const as = t.withIdentity({ name: "Mallory", email: ADMIN_EMAIL, subject: "m", emailVerified: false });
+    await as.mutation(api.users.store, {});
+    expect(await as.query(api.users.me, {})).toMatchObject({ role: "user" });
+  });
+
+  it("caps display names coming from the identity provider", async () => {
+    const t = setup();
+    const as = t.withIdentity({ name: "x".repeat(500), email: "a@example.com", subject: "a" });
+    await as.mutation(api.users.store, {});
+    expect((await as.query(api.users.me, {}))?.name).toHaveLength(80);
+  });
+
+  it("calls Clerk at most once every 30 seconds per user", async () => {
+    vi.stubEnv("CLERK_SECRET_KEY", "sk_test_x");
+    const fetchMock = vi.fn(async () => Response.json({ first_name: "Ana", updated_at: Date.now() }));
+    vi.stubGlobal("fetch", fetchMock);
+    const t = setup();
+    const { as } = await signIn(t, "Ana");
+    expect(await as.action(api.users.refreshProfile, {})).toEqual({ updated: true });
+    expect(await as.action(api.users.refreshProfile, {})).toMatchObject({ updated: false, reason: "checked recently" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("promotes emails listed in ADMIN_EMAILS, case-insensitively", async () => {
     const t = setup();
     const { as } = await signIn(t, "Admin", ADMIN_EMAIL);

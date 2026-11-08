@@ -5,6 +5,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireAdmin, requireUser } from "./lib/auth";
 import { bumpCategory } from "./lib/board";
+import { capPage } from "./lib/pagination";
 import { getSingleton } from "./lib/singletons";
 import { categories, conditions } from "./schema";
 
@@ -67,8 +68,9 @@ async function withOwner(ctx: QueryCtx, t: Doc<"tools">, viewerId: Id<"users">) 
 // name, prefix-matched), optionally narrowed to one category.
 export const list = query({
   args: { paginationOpts: paginationOptsValidator, category: v.optional(v.string()), search: v.optional(v.string()) },
-  handler: async (ctx, { paginationOpts, category, search }) => {
+  handler: async (ctx, { paginationOpts: requested, category, search }) => {
     const user = await requireUser(ctx);
+    const paginationOpts = capPage(requested);
     const term = search?.trim().slice(0, 80);
     const page = term
       ? await ctx.db

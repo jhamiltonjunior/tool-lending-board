@@ -5,6 +5,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireAdmin, requireUser, todayUTC } from "./lib/auth";
 import { refreshToolLoan } from "./lib/board";
+import { capPage } from "./lib/pagination";
 import { storedToday } from "./lib/singletons";
 import { enqueueLoanEvent } from "./notifications";
 
@@ -12,10 +13,14 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // A person's own lists show their most recent loans; older history stays in the database.
 const PER_USER_LIMIT = 200;
 const MAX_LOAN_DAYS = 60;
+const MAX_DAYS_AHEAD = 365;
 
 function validateRange(startDate: string, endDate: string) {
   if (!DATE_RE.test(startDate) || !DATE_RE.test(endDate)) throw new ConvexError("Dates must be YYYY-MM-DD");
   if (startDate < todayUTC()) throw new ConvexError("Start date cannot be in the past");
+  if (Date.parse(startDate) - Date.parse(todayUTC()) > MAX_DAYS_AHEAD * 86_400_000) {
+    throw new ConvexError(`Requests can start at most ${MAX_DAYS_AHEAD} days ahead`);
+  }
   if (endDate < startDate) throw new ConvexError("End date must be on or after the start date");
   const days = (Date.parse(endDate) - Date.parse(startDate)) / 86_400_000;
   if (days > MAX_LOAN_DAYS) throw new ConvexError(`Loans are limited to ${MAX_LOAN_DAYS} days`);
@@ -231,7 +236,7 @@ export const all = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, { paginationOpts }) => {
     await requireAdmin(ctx);
-    const page = await ctx.db.query("loans").order("desc").paginate(paginationOpts);
+    const page = await ctx.db.query("loans").order("desc").paginate(capPage(paginationOpts));
     const today = await storedToday(ctx);
     return { ...page, page: await Promise.all(page.page.map((l) => present(ctx, l, today))) };
   },

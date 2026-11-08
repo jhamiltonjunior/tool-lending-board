@@ -36,6 +36,7 @@ describe("requesting a tool", () => {
     await expect(req(day(-1), day(2))).rejects.toThrow(/in the past/);
     await expect(req(day(3), day(2))).rejects.toThrow(/on or after/);
     await expect(req(day(1), day(62))).rejects.toThrow(/limited to 60 days/);
+    await expect(req(day(400), day(401))).rejects.toThrow(/at most 365 days ahead/);
   });
 
   it("owners cannot borrow their own tool", async () => {

@@ -4,6 +4,10 @@ import { action, mutation, query, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { currentUser, requireAdmin } from "./lib/auth";
 import { bumpUsers } from "./lib/board";
+import { capPage } from "./lib/pagination";
+
+const NAME_MAX = 80;
+const PROFILE_CHECK_EVERY_MS = 30_000;
 
 // Clerk sends updated_at in seconds in tokens and in milliseconds in its API.
 function toMs(value: unknown): number | undefined {
@@ -29,7 +33,9 @@ export const store = mutation({
     if (!identity) throw new ConvexError("Not signed in");
     const email = identity.email ?? "";
     // Never derive a display name from the email: other neighbors see this name.
-    const name = identity.name?.trim() || identity.nickname?.trim() || "Neighbor";
+    const name = (identity.name?.trim() || identity.nickname?.trim() || "Neighbor").slice(0, NAME_MAX);
+    // Admin rights only for a verified email: an unverified address proves nothing.
+    const canBeAdmin = String(identity.emailVerified) === "true" && isBootstrapAdmin(email);
     const tokenProfileAt = toMs(identity.updatedAt);
     const existing = await currentUser(ctx);
     if (existing) {
@@ -42,7 +48,7 @@ export const store = mutation({
         if (tokenProfileAt) patch.profileUpdatedAt = tokenProfileAt;
       }
       if (existing.email !== email) patch.email = email;
-      if (existing.role !== "admin" && isBootstrapAdmin(email)) patch.role = "admin";
+      if (existing.role !== "admin" && canBeAdmin) patch.role = "admin";
       if (Object.keys(patch).length) await ctx.db.patch(existing._id, patch);
       return existing._id;
     }
@@ -51,7 +57,7 @@ export const store = mutation({
       tokenIdentifier: identity.tokenIdentifier,
       name,
       email,
-      role: isBootstrapAdmin(email) ? "admin" : "user",
+      role: canBeAdmin ? "admin" : "user",
       trustedLender: false,
       timesLent: 0,
       ...(tokenProfileAt ? { profileUpdatedAt: tokenProfileAt } : {}),
@@ -72,7 +78,7 @@ export const listForAdmin = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, { paginationOpts }) => {
     await requireAdmin(ctx);
-    const page = await ctx.db.query("users").order("desc").paginate(paginationOpts);
+    const page = await ctx.db.query("users").order("desc").paginate(capPage(paginationOpts));
     return {
       ...page,
       page: page.page.map((u) => ({
@@ -120,6 +126,9 @@ export const refreshProfile = action({
     if (!identity) throw new ConvexError("Not signed in");
     const secret = process.env.CLERK_SECRET_KEY;
     if (!secret) return { updated: false, reason: "CLERK_SECRET_KEY is not set" };
+    // Throttled per user, so a client calling this in a loop cannot burn the Clerk API quota.
+    const allowed = await ctx.runMutation(internal.users.claimProfileCheck, { tokenIdentifier: identity.tokenIdentifier });
+    if (!allowed) return { updated: false, reason: "checked recently" };
     const res = await fetch(`https://api.clerk.com/v1/users/${encodeURIComponent(identity.subject)}`, {
       headers: { Authorization: `Bearer ${secret}` },
       signal: AbortSignal.timeout(10_000),
@@ -134,10 +143,25 @@ export const refreshProfile = action({
     const name = [user.first_name, user.last_name].filter(Boolean).join(" ").trim() || user.username?.trim() || "Neighbor";
     await ctx.runMutation(internal.users.applyProfile, {
       tokenIdentifier: identity.tokenIdentifier,
-      name: name.slice(0, 80),
+      name: name.slice(0, NAME_MAX),
       profileUpdatedAt: toMs(user.updated_at) ?? Date.now(),
     });
     return { updated: true };
+  },
+});
+
+export const claimProfileCheck = internalMutation({
+  args: { tokenIdentifier: v.string() },
+  handler: async (ctx, { tokenIdentifier }) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenIdentifier))
+      .unique();
+    if (!user) return false;
+    const now = Date.now();
+    if (user.profileCheckedAt && now - user.profileCheckedAt < PROFILE_CHECK_EVERY_MS) return false;
+    await ctx.db.patch(user._id, { profileCheckedAt: now });
+    return true;
   },
 });
 

@@ -45,6 +45,8 @@ export default defineSchema({
     // Clerk's updated_at for the profile data stored here, so a stale session token
     // never overwrites a newer name.
     profileUpdatedAt: v.optional(v.number()),
+    // Last time the profile was read from Clerk (rate limit for refreshProfile).
+    profileCheckedAt: v.optional(v.number()),
   })
     .index("by_token", ["tokenIdentifier"])
     .index("by_email", ["email"]),

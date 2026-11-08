@@ -18,7 +18,7 @@ export type T = ReturnType<typeof setup>;
 
 // Signs in through the same mutation the app calls after Clerk sign-in.
 export async function signIn(t: T, name: string, email = `${name.toLowerCase()}@example.com`) {
-  const as = t.withIdentity({ name, email, subject: email });
+  const as = t.withIdentity({ name, email, subject: email, emailVerified: true });
   const id = await as.mutation(api.users.store, {});
   return { as, id };
 }
