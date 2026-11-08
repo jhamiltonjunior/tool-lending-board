@@ -505,4 +505,5 @@ After deploying a version that adds stored counters to a deployment that already
 - **Time zones.** Store each user's time zone and send reminders in their local morning.
 - **Reminder schedule.** Trigger the daily reminder from a Convex cron (or have n8n catch up missed days), so an n8n outage at 09:00 does not skip a day.
 - **Quality.** An end-to-end signed round trip against a real n8n container in CI, and centralized logs with alerts on `workflow_error` and `notification_failed`.
+- **Loan history.** Each loan keeps only its current state: when an owner answers "Not back yet", the reported return is cleared and the disagreement is not recorded. An append-only `loanEvents` table (loan, actor, action, time), written in the same mutation as each change, would give owners, borrowers and admins a timeline to settle disputes.
 - **Privacy.** Per-user rate limits, an audit log for admin actions, and account deletion that anonymizes loan history.
