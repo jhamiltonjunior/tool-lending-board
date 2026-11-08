@@ -164,6 +164,22 @@ describe("board pages, search and counters", () => {
     expect(await stats()).toMatchObject({ total: before.total, free: before.free });
   });
 
+  it("shows booked dates and the viewer's own pending request", async () => {
+    const { t, ana, bob, drill } = await board();
+    const carla = await signIn(t, "Carla");
+    await lend(ana, bob, drill, day(3), day(5));
+    await carla.as.mutation(api.loans.request, { toolId: drill, startDate: day(7), endDate: day(8) });
+
+    const seen = async (who: typeof bob) =>
+      (await who.as.query(api.tools.list, firstPage())).page.find((x) => x._id === drill)!;
+    expect(await seen(carla)).toMatchObject({
+      booked: [{ startDate: day(3), endDate: day(5) }],
+      myRequest: { startDate: day(7), endDate: day(8) },
+    });
+    // Other people's pending requests are not shown, and they don't block dates.
+    expect(await seen(bob)).toMatchObject({ myRequest: null });
+  });
+
   it("counts how many times an owner has lent", async () => {
     const { ana, bob, drill, tent } = await board();
     await lend(ana, bob, drill, day(0), day(1));

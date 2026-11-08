@@ -108,6 +108,15 @@ describe("overdue reminders", () => {
     expect(reminder.status).toBe("sent");
   });
 
+  it("skip loans the borrower reported as returned", async () => {
+    const t = setup();
+    const { loanId, borrower } = await overdueWorld(t);
+    await borrower.as.mutation(api.loans.reportReturned, { loanId });
+    const res = await t.fetch("/n8n/overdue-loans", await signedInit("GET", "/n8n/overdue-loans"));
+    expect((await res.json()).loans).toEqual([]);
+    expect((await borrower.as.query(api.loans.myRequests, {}))[0]).toMatchObject({ overdue: false, returnReported: true });
+  });
+
   it("reject a key that belongs to another loan", async () => {
     const t = setup();
     const { loanId } = await overdueWorld(t);

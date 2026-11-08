@@ -151,3 +151,31 @@ describe("views", () => {
     expect((await admin.as.query(api.loans.all, firstPage())).page).toHaveLength(1);
   });
 });
+
+describe("borrower reports the return", () => {
+  it("lets the borrower say it is back, and the owner confirm or dispute it", async () => {
+    const { t, owner, borrower, toolId } = await world();
+    const stranger = await signIn(t, "Carla");
+    const loanId = await borrower.as.mutation(api.loans.request, { toolId, startDate: day(0), endDate: day(2) });
+
+    await expect(borrower.as.mutation(api.loans.reportReturned, { loanId })).rejects.toThrow(/have right now/);
+    await owner.as.mutation(api.loans.approve, { loanId });
+    await expect(owner.as.mutation(api.loans.reportReturned, { loanId })).rejects.toThrow(/Only the borrower/);
+    await expect(stranger.as.mutation(api.loans.disputeReturn, { loanId })).rejects.toThrow(/Only the tool owner/);
+
+    await borrower.as.mutation(api.loans.reportReturned, { loanId });
+    await expect(borrower.as.mutation(api.loans.reportReturned, { loanId })).rejects.toThrow(/already reported/);
+    expect((await owner.as.query(api.loans.incoming, {}))[0]).toMatchObject({ status: "approved", returnReported: true });
+    expect((await scheduledNotifications(t)).at(-1)).toMatchObject({ status: "return_reported", recipientId: owner.id });
+
+    // Owner did not get it: the loan is open again and the borrower is told.
+    await owner.as.mutation(api.loans.disputeReturn, { loanId });
+    expect((await owner.as.query(api.loans.incoming, {}))[0]).toMatchObject({ returnReported: false });
+    expect((await scheduledNotifications(t)).at(-1)).toMatchObject({ status: "return_disputed", recipientId: borrower.id });
+
+    // Reported again and confirmed: the loan closes as usual.
+    await borrower.as.mutation(api.loans.reportReturned, { loanId });
+    await owner.as.mutation(api.loans.markReturned, { loanId });
+    expect((await borrower.as.query(api.loans.myRequests, {}))[0]).toMatchObject({ status: "returned" });
+  });
+});

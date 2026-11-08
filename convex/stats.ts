@@ -19,7 +19,7 @@ export const admin = query({
       neighbors: board?.users ?? 0,
       tools: Object.values(board?.toolsByCategory ?? {}).reduce((a, b) => a + b, 0),
       lentOut: board?.lentOut ?? 0,
-      late: late.length,
+      late: late.filter((l) => !l.returnReportedAt).length,
       n8nDownSince: delivery?.n8nDown ? (delivery.n8nDownSince ?? null) : null,
     };
   },

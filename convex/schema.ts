@@ -21,6 +21,18 @@ export const loanStatus = v.union(
   v.literal("returned"),
 );
 
+// What a notification is about: a status change, or the borrower reporting the tool
+// back (and the owner saying it is not back yet).
+export const loanEvent = v.union(
+  v.literal("pending"),
+  v.literal("approved"),
+  v.literal("declined"),
+  v.literal("cancelled"),
+  v.literal("returned"),
+  v.literal("return_reported"),
+  v.literal("return_disputed"),
+);
+
 export default defineSchema({
   users: defineTable({
     tokenIdentifier: v.string(),
@@ -62,6 +74,8 @@ export default defineSchema({
     endDate: v.string(),
     status: loanStatus,
     returnedAt: v.optional(v.number()),
+    // The borrower says the tool is back; the owner still confirms (or disputes) it.
+    returnReportedAt: v.optional(v.number()),
   })
     .index("by_tool", ["toolId"])
     .index("by_tool_status", ["toolId", "status"])
@@ -106,7 +120,7 @@ export default defineSchema({
   outbox: defineTable({
     loanId: v.id("loans"),
     recipientId: v.id("users"),
-    status: loanStatus,
+    status: loanEvent,
     eventKey: v.string(),
     state: v.union(v.literal("pending"), v.literal("delivered"), v.literal("dead"), v.literal("dropped")),
     attempts: v.number(),

@@ -31,7 +31,7 @@ const backoffMs = (attempts: number) => Math.min(30_000 * 2 ** (attempts - 1), 1
 // Called by the loan mutations, inside their transaction.
 export async function enqueueLoanEvent(
   ctx: MutationCtx,
-  event: { loanId: Id<"loans">; recipientId: Id<"users">; status: Doc<"loans">["status"]; eventKey: string },
+  event: { loanId: Id<"loans">; recipientId: Id<"users">; status: Doc<"outbox">["status"]; eventKey: string },
 ) {
   const now = Date.now();
   const outboxId = await ctx.db.insert("outbox", {

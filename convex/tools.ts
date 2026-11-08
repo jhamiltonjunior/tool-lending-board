@@ -2,7 +2,7 @@ import { v, ConvexError } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireAdmin, requireUser } from "./lib/auth";
 import { bumpCategory } from "./lib/board";
 import { getSingleton } from "./lib/singletons";
@@ -36,8 +36,11 @@ export const publicList = query({
   },
 });
 
-async function withOwner(ctx: QueryCtx, t: Doc<"tools">) {
-  const owner = await ctx.db.get(t.ownerId);
+async function withOwner(ctx: QueryCtx, t: Doc<"tools">, viewerId: Id<"users">) {
+  const byStatus = (status: "approved" | "pending") =>
+    ctx.db.query("loans").withIndex("by_tool_status", (q) => q.eq("toolId", t._id).eq("status", status)).collect();
+  const [owner, approved, pending] = await Promise.all([ctx.db.get(t.ownerId), byStatus("approved"), byStatus("pending")]);
+  const mine = pending.find((l) => l.borrowerId === viewerId);
   return {
     _id: t._id,
     name: t.name,
@@ -51,6 +54,12 @@ async function withOwner(ctx: QueryCtx, t: Doc<"tools">) {
     available: t.activeLoanId === undefined,
     // When the tool is due back (YYYY-MM-DD), only while it is lent out.
     backOn: t.lentUntil ?? null,
+    // Approved loans still open, so borrowers can pick free dates up front.
+    booked: approved
+      .map((l) => ({ startDate: l.startDate, endDate: l.endDate }))
+      .sort((a, b) => a.startDate.localeCompare(b.startDate)),
+    // The viewer's own pending request, so the board keeps showing it after a reload.
+    myRequest: mine ? { startDate: mine.startDate, endDate: mine.endDate } : null,
   };
 }
 
@@ -59,7 +68,7 @@ async function withOwner(ctx: QueryCtx, t: Doc<"tools">) {
 export const list = query({
   args: { paginationOpts: paginationOptsValidator, category: v.optional(v.string()), search: v.optional(v.string()) },
   handler: async (ctx, { paginationOpts, category, search }) => {
-    await requireUser(ctx);
+    const user = await requireUser(ctx);
     const term = search?.trim().slice(0, 80);
     const page = term
       ? await ctx.db
@@ -76,7 +85,7 @@ export const list = query({
             .order("desc")
             .paginate(paginationOpts)
         : await ctx.db.query("tools").order("desc").paginate(paginationOpts);
-    return { ...page, page: await Promise.all(page.page.map((t) => withOwner(ctx, t))) };
+    return { ...page, page: await Promise.all(page.page.map((t) => withOwner(ctx, t, user._id))) };
   },
 });
 
@@ -97,7 +106,7 @@ export const mine = query({
   handler: async (ctx) => {
     const user = await requireUser(ctx);
     const tools = await ctx.db.query("tools").withIndex("by_owner", (q) => q.eq("ownerId", user._id)).collect();
-    return Promise.all(tools.map((t) => withOwner(ctx, t)));
+    return Promise.all(tools.map((t) => withOwner(ctx, t, user._id)));
   },
 });
 
