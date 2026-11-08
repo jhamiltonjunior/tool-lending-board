@@ -15,6 +15,12 @@ const nextConfig: NextConfig = {
   // Hide the floating Next.js dev badge; it ends up in screenshots and demos.
   devIndicators: false,
   poweredByHeader: false,
+  // The local Convex backend keeps its database in .convex/; without this, every data
+  // write makes the dev server recompile and reload open pages.
+  webpack(config) {
+    config.watchOptions = { ...config.watchOptions, ignored: ["**/node_modules/**", "**/.git/**", "**/.next/**", "**/.convex/**"] };
+    return config;
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
