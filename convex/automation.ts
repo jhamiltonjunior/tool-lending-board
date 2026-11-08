@@ -49,6 +49,7 @@ export const overdueLoans = internalQuery({
       .collect();
     const out = [];
     for (const loan of loans) {
+      if (loan.returnReportedAt) continue; // the borrower says it is back; the owner has to confirm
       const key = `${loan._id}:${today}`;
       const already = await ctx.db.query("reminders").withIndex("by_key", (q) => q.eq("idempotencyKey", key)).unique();
       if (already?.status === "sent") continue; // already reminded today

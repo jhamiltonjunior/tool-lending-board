@@ -26,13 +26,20 @@ const overlaps = (a: { startDate: string; endDate: string }, b: { startDate: str
 
 // Notify only the person who needs to act or to know. The event goes to the outbox in
 // this same transaction; notifications.ts delivers it and minimises the payload.
-async function notify(ctx: MutationCtx, loan: Doc<"loans">, recipient: "owner" | "borrower") {
+async function notify(
+  ctx: MutationCtx,
+  loan: Doc<"loans">,
+  recipient: "owner" | "borrower",
+  event: Doc<"outbox">["status"] = loan.status,
+) {
+  const repeatable = event === "return_reported" || event === "return_disputed";
   await enqueueLoanEvent(ctx, {
     loanId: loan._id,
     recipientId: recipient === "owner" ? loan.ownerId : loan.borrowerId,
-    status: loan.status,
-    // One key per state change, the same across retries, so redeliveries stay idempotent.
-    eventKey: `${loan._id}:${loan.status}`,
+    status: event,
+    // One key per event, the same across retries, so redeliveries stay idempotent.
+    // A return can be reported and disputed more than once, so those keys get a timestamp.
+    eventKey: repeatable ? `${loan._id}:${event}:${Date.now()}` : `${loan._id}:${event}`,
   });
 }
 
@@ -119,6 +126,37 @@ export const markReturned = mutation({
   },
 });
 
+// The borrower says the tool is back. The loan stays open until the owner confirms it,
+// but overdue reminders stop and the owner is notified.
+export const reportReturned = mutation({
+  args: { loanId: v.id("loans") },
+  handler: async (ctx, { loanId }) => {
+    const user = await requireUser(ctx);
+    const loan = await ctx.db.get(loanId);
+    if (!loan) throw new ConvexError("Request not found");
+    if (loan.borrowerId !== user._id) throw new ConvexError("Only the borrower can report a return");
+    if (loan.status !== "approved" || loan.startDate > todayUTC()) {
+      throw new ConvexError("Only a tool you have right now can be reported as returned");
+    }
+    if (loan.returnReportedAt) throw new ConvexError("You already reported this return");
+    await ctx.db.patch(loanId, { returnReportedAt: Date.now() });
+    await notify(ctx, loan, "owner", "return_reported");
+  },
+});
+
+// The owner did not get it back: the loan is open again and reminders resume.
+export const disputeReturn = mutation({
+  args: { loanId: v.id("loans") },
+  handler: async (ctx, { loanId }) => {
+    const loan = await loadForOwner(ctx, loanId);
+    if (loan.status !== "approved" || !loan.returnReportedAt) {
+      throw new ConvexError("There is no reported return to dispute");
+    }
+    await ctx.db.patch(loanId, { returnReportedAt: undefined });
+    await notify(ctx, loan, "borrower", "return_disputed");
+  },
+});
+
 export const cancel = mutation({
   args: { loanId: v.id("loans") },
   handler: async (ctx, { loanId }) => {
@@ -152,7 +190,8 @@ async function present(ctx: QueryCtx, loan: Doc<"loans">, today: string) {
     startDate: loan.startDate,
     endDate: loan.endDate,
     status: loan.status,
-    overdue: loan.status === "approved" && loan.endDate < today,
+    overdue: loan.status === "approved" && !loan.returnReportedAt && loan.endDate < today,
+    returnReported: loan.status === "approved" && loan.returnReportedAt !== undefined,
     lastActivity: lastActivity
       ? { kind: lastActivity.kind, at: lastActivity._creationTime, detail: lastActivity.detail }
       : null,

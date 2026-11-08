@@ -1,8 +1,16 @@
 import { v, ConvexError } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
-import { mutation, query, internalMutation } from "./_generated/server";
+import { action, mutation, query, internalMutation } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { currentUser, requireAdmin } from "./lib/auth";
 import { bumpUsers } from "./lib/board";
+
+// Clerk sends updated_at in seconds in tokens and in milliseconds in its API.
+function toMs(value: unknown): number | undefined {
+  const n = typeof value === "string" ? Number(value) : typeof value === "number" ? value : NaN;
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return n < 1e12 ? n * 1000 : n;
+}
 
 function isBootstrapAdmin(email: string): boolean {
   const list = (process.env.ADMIN_EMAILS ?? "")
@@ -20,11 +28,19 @@ export const store = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Not signed in");
     const email = identity.email ?? "";
-    const name = identity.name ?? identity.nickname ?? email.split("@")[0] ?? "Neighbor";
+    // Never derive a display name from the email: other neighbors see this name.
+    const name = identity.name?.trim() || identity.nickname?.trim() || "Neighbor";
+    const tokenProfileAt = toMs(identity.updatedAt);
     const existing = await currentUser(ctx);
     if (existing) {
       const patch: Record<string, unknown> = {};
-      if (existing.name !== name) patch.name = name;
+      // Session tokens can be up to an hour old: only take their name if it is not older
+      // than what refreshProfile already stored.
+      const newer = (tokenProfileAt ?? 0) >= (existing.profileUpdatedAt ?? 0);
+      if (newer && existing.name !== name) {
+        patch.name = name;
+        if (tokenProfileAt) patch.profileUpdatedAt = tokenProfileAt;
+      }
       if (existing.email !== email) patch.email = email;
       if (existing.role !== "admin" && isBootstrapAdmin(email)) patch.role = "admin";
       if (Object.keys(patch).length) await ctx.db.patch(existing._id, patch);
@@ -38,6 +54,7 @@ export const store = mutation({
       role: isBootstrapAdmin(email) ? "admin" : "user",
       trustedLender: false,
       timesLent: 0,
+      ...(tokenProfileAt ? { profileUpdatedAt: tokenProfileAt } : {}),
     });
   },
 });
@@ -89,5 +106,49 @@ export const setRole = internalMutation({
       .unique();
     if (!user) throw new ConvexError("User not found; they must sign in once first");
     await ctx.db.patch(user._id, { role });
+  },
+});
+
+// A rename in Clerk only reaches session tokens when they are reissued (up to an hour
+// with the current template). This reads the profile straight from Clerk's API with the
+// server-side secret, so the new name shows up at once. The browser only triggers it:
+// the data never comes from the client.
+export const refreshProfile = action({
+  args: {},
+  handler: async (ctx): Promise<{ updated: boolean; reason?: string }> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError("Not signed in");
+    const secret = process.env.CLERK_SECRET_KEY;
+    if (!secret) return { updated: false, reason: "CLERK_SECRET_KEY is not set" };
+    const res = await fetch(`https://api.clerk.com/v1/users/${encodeURIComponent(identity.subject)}`, {
+      headers: { Authorization: `Bearer ${secret}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return { updated: false, reason: `Clerk responded ${res.status}` };
+    const user = (await res.json()) as {
+      first_name?: string | null;
+      last_name?: string | null;
+      username?: string | null;
+      updated_at?: number;
+    };
+    const name = [user.first_name, user.last_name].filter(Boolean).join(" ").trim() || user.username?.trim() || "Neighbor";
+    await ctx.runMutation(internal.users.applyProfile, {
+      tokenIdentifier: identity.tokenIdentifier,
+      name: name.slice(0, 80),
+      profileUpdatedAt: toMs(user.updated_at) ?? Date.now(),
+    });
+    return { updated: true };
+  },
+});
+
+export const applyProfile = internalMutation({
+  args: { tokenIdentifier: v.string(), name: v.string(), profileUpdatedAt: v.number() },
+  handler: async (ctx, { tokenIdentifier, name, profileUpdatedAt }) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenIdentifier))
+      .unique();
+    if (!user || (user.profileUpdatedAt ?? 0) > profileUpdatedAt) return;
+    await ctx.db.patch(user._id, { name, profileUpdatedAt });
   },
 });

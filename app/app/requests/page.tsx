@@ -8,13 +8,14 @@ import { Button, ErrorText, PageHeader, useAction } from "@/components/ui";
 export default function MyRequests() {
   const loans = useQuery(api.loans.myRequests);
   const cancel = useAction(useMutation(api.loans.cancel));
+  const giveBack = useAction(useMutation(api.loans.reportReturned));
   const open = loans?.filter((l) => l.status === "pending" || l.status === "approved");
   const history = loans?.filter((l) => l.status !== "pending" && l.status !== "approved");
 
   return (
     <div>
       <PageHeader title="My requests." lede="What you asked to borrow, and what you have right now." />
-      <ErrorText error={cancel.error} />
+      <ErrorText error={cancel.error ?? giveBack.error} />
       <RequestList
         loans={open}
         perspective="borrower"
@@ -23,6 +24,10 @@ export default function MyRequests() {
           l.status === "pending" ? (
             <Button size="sm" variant="quiet" disabled={cancel.busy} onClick={() => cancel.run({ loanId: l._id })}>
               Cancel request
+            </Button>
+          ) : l.status === "approved" && l.started && !l.returnReported ? (
+            <Button size="sm" disabled={giveBack.busy} onClick={() => giveBack.run({ loanId: l._id })}>
+              I returned it
             </Button>
           ) : null
         }

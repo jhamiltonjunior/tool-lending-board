@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ReactNode, useEffect, useState } from "react";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
-import { UserButton } from "@clerk/nextjs";
+import { useAction as useConvexAction, useConvexAuth, useMutation, useQuery } from "convex/react";
+import { UserButton, useUser } from "@clerk/nextjs";
 import { api } from "@/convex/_generated/api";
 import { Loading } from "@/components/ui";
 
@@ -29,6 +29,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
     if (!isAuthenticated) return;
     store().then(() => setStored(true));
   }, [isAuthenticated, store]);
+
+  // When the Clerk profile shows a different name (e.g. just renamed), ask the server
+  // to read it from Clerk. Session tokens would only carry it when they are reissued.
+  const { user } = useUser();
+  const refreshProfile = useConvexAction(api.users.refreshProfile);
+  const profileName = user?.fullName?.trim() || user?.username || null;
+  const outOfSync = stored && me != null && profileName !== null && me.name !== profileName;
+  useEffect(() => {
+    if (outOfSync) void refreshProfile().catch(() => {});
+  }, [outOfSync, profileName, refreshProfile]);
 
   const nav = me?.role === "admin" ? [...NAV, { href: "/app/admin", label: "Admin" }] : NAV;
   const links = nav.map((n) => (

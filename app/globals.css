@@ -120,6 +120,9 @@ body {
 .ll-on-panel .ll-btn:hover, .ll-slot .ll-btn:hover, .ll-req .ll-btn:hover { background: var(--paper); }
 .ll-on-panel .ll-btn-quiet, .ll-slot .ll-btn-quiet, .ll-req .ll-btn-quiet { background: transparent; }
 .ll-on-panel .ll-btn-primary, .ll-slot .ll-btn-primary, .ll-req .ll-btn-primary { background: var(--ink); }
+/* Keep primary and quiet hovers inside panels: the generic panel hover above is more specific and turned them pale. */
+.ll-on-panel .ll-btn-primary:hover, .ll-slot .ll-btn-primary:hover, .ll-req .ll-btn-primary:hover { background: var(--ink); opacity: .86; }
+.ll-on-panel .ll-btn-quiet:hover, .ll-slot .ll-btn-quiet:hover, .ll-req .ll-btn-quiet:hover { background: transparent; color: var(--ink); }
 
 /* ---------- Fields ---------- */
 .ll-field { display: grid; gap: var(--space-2); min-width: 0; }

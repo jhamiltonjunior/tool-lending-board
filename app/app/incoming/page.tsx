@@ -10,7 +10,8 @@ export default function Incoming() {
   const approve = useAction(useMutation(api.loans.approve));
   const decline = useAction(useMutation(api.loans.decline));
   const returned = useAction(useMutation(api.loans.markReturned));
-  const busy = approve.busy || decline.busy || returned.busy;
+  const dispute = useAction(useMutation(api.loans.disputeReturn));
+  const busy = approve.busy || decline.busy || returned.busy || dispute.busy;
 
   const waiting = loans?.filter((l) => l.status === "pending");
   const out = loans?.filter((l) => l.status === "approved");
@@ -19,7 +20,7 @@ export default function Incoming() {
   return (
     <div>
       <PageHeader title="Incoming." lede="Neighbors asking for your tools." />
-      <ErrorText error={approve.error ?? decline.error ?? returned.error} />
+      <ErrorText error={approve.error ?? decline.error ?? returned.error ?? dispute.error} />
 
       <section>
         <h2 className="ll-section-label">Waiting for you.</h2>
@@ -42,9 +43,16 @@ export default function Incoming() {
           loans={out}
           perspective="owner"
           empty={{ title: "Everything is home." }}
-          actions={(l) => (
-            <Button size="sm" disabled={busy} onClick={() => returned.run({ loanId: l._id })}>Mark as returned</Button>
-          )}
+          actions={(l) =>
+            l.returnReported ? (
+              <>
+                <Button size="sm" disabled={busy} onClick={() => returned.run({ loanId: l._id })}>Confirm return</Button>
+                <Button size="sm" variant="quiet" disabled={busy} onClick={() => dispute.run({ loanId: l._id })}>Not back yet</Button>
+              </>
+            ) : (
+              <Button size="sm" disabled={busy} onClick={() => returned.run({ loanId: l._id })}>Mark as returned</Button>
+            )
+          }
         />
       </section>
 
