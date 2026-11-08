@@ -25,6 +25,7 @@ A neighborhood tool-lending board with authenticated listings, date-range borrow
 - [Features](#features)
 - [Architecture](#architecture)
 - [Automation flows](#automation-flows)
+- [Scaling and reliability](#scaling-and-reliability)
 - [Data model](#data-model)
 - [Authorization model](#authorization-model)
 - [Security and data minimization](#security-and-data-minimization)
@@ -80,8 +81,9 @@ flowchart TB
         FN["Queries and mutations<br/>tools · loans · users"]
         AZ{{"Authorization check<br/>in every function"}}
         DB[(Database)]
-        SCH[Scheduler]
-        ACT["notifications.sendLoanEvent<br/>signed POST + retries"]
+        OB[(Outbox)]
+        CR["Crons<br/>outbox worker · clock"]
+        ACT["notifications.deliver<br/>signed POST"]
         HTTP["HTTP actions<br/>HMAC verified"]
     end
 
@@ -97,7 +99,9 @@ flowchart TB
     CL -- JWT --> UI
     UI -- "queries / mutations + JWT" --> FN
     FN --> AZ --> DB
-    FN -- status change --> SCH --> ACT
+    FN -- "status change + event,<br/>one transaction" --> OB
+    OB --> ACT
+    CR -- "due and failed events" --> ACT
     ACT -- "signed webhook" --> W1
     W1 -- "signed write-back" --> HTTP
     W2 -- "signed GET / POST" --> HTTP
@@ -126,8 +130,7 @@ sequenceDiagram
     actor Borrower
 
     Owner->>CX: approve(loanId)
-    CX->>CX: authorize owner, update status
-    CX->>CX: schedule sendLoanEvent
+    CX->>CX: authorize owner, update status<br/>and write the event to the outbox (one transaction)
     CX->>N8N: POST /webhook/lendloop-loan-events<br/>(HMAC-signed, minimal payload)
     N8N->>N8N: verify signature and timestamp
     alt signature invalid
@@ -138,7 +141,7 @@ sequenceDiagram
         CX->>CX: record activity once per eventKey
         N8N-->>CX: 200 OK
     end
-    Note over CX,N8N: On non-2xx Convex retries with<br/>exponential backoff (5 attempts),<br/>then records notification_failed
+    Note over CX,N8N: Not delivered? The event stays in the outbox<br/>and the worker retries it (see below)
 ```
 
 **Who is notified:** a new request goes to the **owner**; approved, declined and returned go to the **borrower**; a cancellation goes to the **owner**.
@@ -163,6 +166,25 @@ sequenceDiagram
     end
 ```
 
+### Notification delivery (outbox)
+
+A status change and its notification are written in **one transaction**, so the event exists exactly when the change does. Delivery is then retried until n8n takes it:
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: status change (same transaction)
+    pending --> delivered: n8n answers 2xx
+    pending --> pending: network error, 5xx, 408, 429<br/>retry with backoff (30 s up to 15 min)
+    pending --> dead: n8n answers 4xx<br/>or 24 h without success
+    pending --> dropped: loan or recipient deleted
+    dead --> pending: admin clicks Resend
+    delivered --> [*]
+```
+
+- **Deploys and restarts lose nothing.** Each attempt holds a 2-minute lease on its row. If the process dies mid-attempt, the lease runs out and the worker (a Convex cron, every minute) picks the row up again. Requests time out after 30 s, well inside the lease, so a slow attempt is never sent twice in parallel.
+- **Circuit breaker.** The first transient failure marks n8n as down. While it is down the worker sends **one probe per minute** instead of the whole backlog. The first success marks it up and sends the backlog at once. Admins see a banner while n8n is down.
+- **At least once.** The `eventKey` is the same on every attempt (`loanId:status`), so the write-back to Convex is deduplicated and a real channel can use it as its idempotency key.
+
 ### Failure handling
 
 ```mermaid
@@ -174,6 +196,19 @@ flowchart LR
     E --> F[Admin panel:<br/>Automation problems]
 ```
 
+## Scaling and reliability
+
+| Question | Answer |
+|---|---|
+| **Cache?** | Convex caches every query result and re-runs it only when a document it read changes, then pushes the new result over the open WebSocket. The public list reads no identity, so all visitors share one cached result. An extra cache (Redis) would add a second source of truth for no gain. |
+| **Time in cached queries** | A query that called `Date.now()` would keep yesterday's answer until some data changed. Queries read the current day from a stored document instead, and a cron advances it, which refreshes every query that depends on the date ("late", "with borrower"). |
+| **Queue?** | The outbox table is the queue: written in the same transaction as the change, drained by a cron worker, with leases, backoff and a circuit breaker. An external broker (SQS, RabbitMQ) would add a second system that cannot join the Convex transaction. |
+| **Concurrency** | Convex mutations are serializable transactions. Two owners approving overlapping loans at the same moment cannot both succeed: one is retried and then fails the overlap check. |
+| **Read cost** | Lists never scan loans. Each tool stores whether it is lent out and until when, each user stores how many times they have lent, and header counters live in one document. All are updated by the mutations that change them, and `stats:recompute` rebuilds them from raw data. |
+| **Large lists** | The board and the admin lists are paginated; search runs on the server through a full-text index on the tool name. A person's own requests show the latest 200. |
+
+**Known limits.** The counters live in one document, so at very high write rates (thousands of new listings per second) they would conflict and should be sharded. n8n runs as a single container with SQLite, which is a single point of failure for the automations (notifications wait in the outbox, but the daily reminder is skipped if n8n is down at 09:00).
+
 ## Data model
 
 ```mermaid
@@ -183,6 +218,7 @@ erDiagram
     TOOLS ||--o{ LOANS : "is requested in"
     LOANS ||--o{ REMINDERS : "receives"
     LOANS ||--o{ AUTOMATION_EVENTS : "logs"
+    LOANS ||--o{ OUTBOX : "notifies through"
 
     USERS {
         string tokenIdentifier "Clerk identity"
@@ -190,6 +226,7 @@ erDiagram
         string email
         enum role "admin | user"
         boolean trustedLender
+        number timesLent
     }
     TOOLS {
         id ownerId
@@ -197,6 +234,8 @@ erDiagram
         string category
         string condition
         string description
+        id activeLoanId "set while lent out"
+        date lentUntil
     }
     LOANS {
         id toolId
@@ -217,6 +256,13 @@ erDiagram
         string eventKey "unique"
         enum kind
         string detail
+    }
+    OUTBOX {
+        id loanId
+        string eventKey "same on every attempt"
+        enum state "pending | delivered | dead | dropped"
+        number attempts
+        number nextAttemptAt "due time and lease"
     }
 ```
 
@@ -260,7 +306,7 @@ Roles are **never taken from the client**. A user becomes admin only if their em
 | **Authenticity between services** | Every Convex ⇄ n8n call carries `x-lendloop-timestamp` and `x-lendloop-signature = sha256=HMAC(secret, "ts.METHOD.path.rawBody")`. Binding method and path prevents cross-endpoint replay. Requests older than 5 minutes are rejected, and the comparison is constant-time. n8n verifies against the **raw body**. |
 | **Secrets** | `LENDLOOP_WEBHOOK_SECRET` lives only in the Convex env and in the n8n container env (`.env.n8n`, git-ignored). Workflows read it via `$env`. The exported workflow JSON contains no secrets. |
 | **Idempotency** | Reminders are keyed by `loanId:day`, and a success is never downgraded. Notification records are keyed by `eventKey`. Retries and repeated schedule runs are no-ops. |
-| **No silent failures** | Convex retries the webhook 5 times with exponential backoff, then records `notification_failed`. n8n HTTP nodes retry 3 times, and any failed execution reaches the error workflow, which records a `workflow_error`. |
+| **No silent failures** | Notifications go through a transactional outbox with retries, a circuit breaker and a 24-hour window, then `notification_failed` with a Resend button for admins. n8n HTTP nodes retry 3 times, and any failed execution reaches the error workflow, which records a `workflow_error`. |
 | **Data minimization** | n8n receives only what one notification needs: recipient name and email, tool name, dates and status. It never gets user ids, roles or other users' data. The public page exposes no owner information. |
 | **Input validation** | Field lengths, allowed categories and conditions, date format and range (no past dates, at most 60 days), and shape and size checks on every HTTP payload. |
 
@@ -346,7 +392,7 @@ The n8n editor is available at http://localhost:5678.
 ### Automated tests
 
 ```bash
-npm test          # 40 tests, no external services needed
+npm test          # 52 tests, no external services needed
 npm run typecheck
 ```
 
@@ -355,9 +401,11 @@ The suite runs every Convex function against an in-memory backend (`convex-test`
 | File | What it proves |
 |---|---|
 | `convex/users.test.ts` | Roles come only from `ADMIN_EMAILS`; only admins list users and mark Trusted Lenders |
-| `convex/tools.test.ts` | Public list leaks no owner data; validation; only owners edit or delete; admin removal; no deleting a tool that is lent out |
+| `convex/tools.test.ts` | Public list leaks no owner data; validation; only owners edit or delete; admin removal; no deleting a tool that is lent out; pages, server search and counters |
 | `convex/loans.test.ts` | Date rules, no borrowing your own tool, no overlapping approvals, who can approve, decline, return and cancel, and who gets notified |
-| `convex/automation.test.ts` | Unsigned, forged, stale and cross-endpoint calls get `401`; reminders are idempotent; notifications are signed and minimal; 5 retries, then `notification_failed` |
+| `convex/automation.test.ts` | Unsigned, forged, stale and cross-endpoint calls get `401`; reminders are idempotent; workflow errors reach admins |
+| `convex/outbox.test.ts` | Signed minimal payload; n8n down then back; an attempt killed mid-flight (deploy) is picked up after its lease; one probe while n8n is down, then the backlog; 4xx and 24 h give up; admin resend |
+| `convex/clock.test.ts` | Tools go out on the loan's start day, loans turn late the next day, a late tool stays with its borrower |
 | `convex/hmac.test.ts` | Signature, tampering, replay and tolerance rules |
 
 ### Manual integration check
@@ -378,7 +426,7 @@ docker compose exec -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id=LendLoo
 | Valid signature (both directions) | `200` | ✅ |
 | Forged, stale or missing signature | `401` | ✅ |
 | Reminder workflow run twice the same day | One reminder per loan | ✅ |
-| n8n offline during a status change | 5 retries, then `notification_failed` on the loan | ✅ |
+| n8n offline during a status change | Event waits in the outbox and goes out when n8n is back | ✅ |
 | Failing workflow node | `workflow_error` recorded and visible to admins | ✅ |
 
 ## CI/CD
@@ -411,7 +459,7 @@ Every job that needs credentials checks for them first and **skips with a notice
 | `N8N_API_URL` | Variable | n8n workflow deploy |
 | `N8N_API_KEY` | Secret (`production` environment) | n8n workflow deploy |
 
-Convex env vars (`CLERK_JWT_ISSUER_DOMAIN`, `LENDLOOP_WEBHOOK_SECRET`, ...) are set once in the Convex dashboard, including the defaults for preview deployments. The n8n deploy only **updates** workflows that already exist, so the first import is the manual one from [Start n8n](#4-start-n8n). Dependabot opens weekly update PRs for npm packages and actions.
+After deploying a version that adds stored counters to a deployment that already has data, run `npx convex run stats:recompute` once. Convex env vars (`CLERK_JWT_ISSUER_DOMAIN`, `LENDLOOP_WEBHOOK_SECRET`, ...) are set once in the Convex dashboard, including the defaults for preview deployments. The n8n deploy only **updates** workflows that already exist, so the first import is the manual one from [Start n8n](#4-start-n8n). Dependabot opens weekly update PRs for npm packages and actions.
 
 ## Project structure
 
@@ -429,7 +477,10 @@ Convex env vars (`CLERK_JWT_ISSUER_DOMAIN`, `LENDLOOP_WEBHOOK_SECRET`, ...) are 
 │   ├── tools.ts            Listings
 │   ├── loans.ts            Borrow requests and lifecycle
 │   ├── users.ts            Profiles, roles, Trusted Lender
-│   ├── notifications.ts    Signed webhook to n8n with retries
+│   ├── notifications.ts    Outbox, delivery worker, circuit breaker, resend
+│   ├── clock.ts            Daily clock: stored day and loans that start today
+│   ├── crons.ts            Outbox worker (every minute) and clock (every 10 minutes)
+│   ├── stats.ts            Admin counters and the recompute tool
 │   ├── automation.ts       Overdue query and idempotent write-backs
 │   └── http.ts             HMAC-verified endpoints for n8n
 ├── n8n/workflows/          Exported workflows (no secrets)
@@ -440,12 +491,12 @@ Convex env vars (`CLERK_JWT_ISSUER_DOMAIN`, `LENDLOOP_WEBHOOK_SECRET`, ...) are 
 
 ## Running in production
 
-- **Real channels.** Replace the mock notification nodes with email (Resend, SES) or Slack, and dedupe sends by `eventKey` in n8n so a redelivered webhook never sends twice.
-- **Delivery guarantees.** Persist outgoing events in an outbox table, mark them delivered on a 2xx, and alert on undelivered events.
+- **Real channels.** Replace the mock notification nodes with email (Resend, SES) or Slack, passing `eventKey` as the provider's idempotency key so a redelivered event never sends twice.
+- **Delivery alerts.** Page someone when n8n has been marked down for more than a few minutes, not only show it in the admin panel.
 - **Secret management.** Rotate with two active secrets and a key id header, inject secrets through n8n external secrets, and set `N8N_BLOCK_ENV_ACCESS_IN_NODE=true`.
 - **Replay protection.** Store recent signatures for the tolerance window and reject repeats.
 - **n8n at scale.** Postgres instead of SQLite, queue mode with workers, HTTPS and network allow-listing between Convex and n8n.
 - **Time zones.** Store each user's time zone and send reminders in their local morning.
-- **Performance.** Paginate list queries, add indexes for admin views, and denormalize tool availability.
+- **Reminder schedule.** Trigger the daily reminder from a Convex cron (or have n8n catch up missed days), so an n8n outage at 09:00 does not skip a day.
 - **Quality.** An end-to-end signed round trip against a real n8n container in CI, and centralized logs with alerts on `workflow_error` and `notification_failed`.
 - **Privacy.** Per-user rate limits, an audit log for admin actions, and account deletion that anonymizes loan history.
