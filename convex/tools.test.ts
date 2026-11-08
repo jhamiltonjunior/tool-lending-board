@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "./_generated/api";
-import { ADMIN_EMAIL, createTool, day, insertLoan, setup, signIn } from "./test.helpers";
+import { api, internal } from "./_generated/api";
+import { ADMIN_EMAIL, createTool, day, firstPage, insertLoan, lend, setup, signIn } from "./test.helpers";
 
 beforeEach(() => vi.stubEnv("ADMIN_EMAILS", ADMIN_EMAIL));
 afterEach(() => vi.unstubAllEnvs());
@@ -12,14 +12,7 @@ describe("public list", () => {
     const bob = await signIn(t, "Bob");
     const drill = await createTool(ana.as, "Cordless drill");
     const tent = await createTool(ana.as, "Tent");
-    await insertLoan(t, {
-      toolId: tent,
-      ownerId: ana.id,
-      borrowerId: bob.id,
-      startDate: day(-1),
-      endDate: day(2),
-      status: "approved",
-    });
+    await lend(ana, bob, tent, day(0), day(2));
 
     const list = await t.query(api.tools.publicList, {});
     expect(list).toEqual([{ _id: drill, name: "Cordless drill", category: "power tools" }]);
@@ -29,7 +22,7 @@ describe("public list", () => {
 describe("signed-in list", () => {
   it("requires sign-in", async () => {
     const t = setup();
-    await expect(t.query(api.tools.list, {})).rejects.toThrow(/Not signed in/);
+    await expect(t.query(api.tools.list, firstPage())).rejects.toThrow(/Not signed in/);
   });
 
   it("shows when a lent tool comes back", async () => {
@@ -37,16 +30,9 @@ describe("signed-in list", () => {
     const ana = await signIn(t, "Ana");
     const bob = await signIn(t, "Bob");
     const tent = await createTool(ana.as, "Tent");
-    await insertLoan(t, {
-      toolId: tent,
-      ownerId: ana.id,
-      borrowerId: bob.id,
-      startDate: day(-1),
-      endDate: day(3),
-      status: "approved",
-    });
+    await lend(ana, bob, tent, day(0), day(3));
 
-    const [tool] = await bob.as.query(api.tools.list, {});
+    const [tool] = (await bob.as.query(api.tools.list, firstPage())).page;
     expect(tool).toMatchObject({ available: false, backOn: day(3), ownerName: "Ana", ownerTimesLent: 1 });
   });
 });
@@ -127,5 +113,62 @@ describe("admin removal", () => {
     await expect(
       admin.as.mutation(api.tools.update, { toolId, name: "x", category: "other", condition: "good", description: "" }),
     ).rejects.toThrow(/your own listings/);
+  });
+});
+
+describe("board pages, search and counters", () => {
+  async function board() {
+    const t = setup();
+    const ana = await signIn(t, "Ana");
+    const bob = await signIn(t, "Bob");
+    const create = (name: string, category: string) =>
+      ana.as.mutation(api.tools.create, { name, category, condition: "good", description: "" });
+    const drill = await create("Cordless drill", "power tools");
+    const sander = await create("Orbital sander", "power tools");
+    const tent = await create("Tent for 4", "camping");
+    return { t, ana, bob, drill, sander, tent };
+  }
+
+  it("pages through the board", async () => {
+    const { bob } = await board();
+    const first = await bob.as.query(api.tools.list, firstPage(2));
+    expect(first.page).toHaveLength(2);
+    expect(first.isDone).toBe(false);
+    const rest = await bob.as.query(api.tools.list, { paginationOpts: { numItems: 2, cursor: first.continueCursor } });
+    expect(rest.page).toHaveLength(1);
+    expect(rest.isDone).toBe(true);
+  });
+
+  it("searches by name on the server, optionally within a category", async () => {
+    const { bob } = await board();
+    const names = async (args: { search?: string; category?: string }) =>
+      (await bob.as.query(api.tools.list, { ...firstPage(), ...args })).page.map((t) => t.name).sort();
+
+    expect(await names({ search: "drill" })).toEqual(["Cordless drill"]);
+    expect(await names({ search: "tent", category: "power tools" })).toEqual([]);
+    expect(await names({ category: "power tools" })).toEqual(["Cordless drill", "Orbital sander"]);
+  });
+
+  it("keeps the header counters in step with every change", async () => {
+    const { t, ana, bob, drill, tent } = await board();
+    const stats = () => bob.as.query(api.tools.stats, {});
+    expect(await stats()).toEqual({ total: 3, free: 3, byCategory: { "power tools": 2, camping: 1 } });
+
+    await ana.as.mutation(api.tools.update, { toolId: tent, name: "Tent", category: "other", condition: "good", description: "" });
+    await lend(ana, bob, drill, day(0), day(2));
+    expect(await stats()).toEqual({ total: 3, free: 2, byCategory: { "power tools": 2, camping: 0, other: 1 } });
+
+    // Rebuilding from raw data gives the same numbers as the incremental updates.
+    const before = await stats();
+    await t.mutation(internal.stats.recompute, {});
+    expect(await stats()).toMatchObject({ total: before.total, free: before.free });
+  });
+
+  it("counts how many times an owner has lent", async () => {
+    const { ana, bob, drill, tent } = await board();
+    await lend(ana, bob, drill, day(0), day(1));
+    await lend(ana, bob, tent, day(2), day(3));
+    const tools = (await bob.as.query(api.tools.list, firstPage())).page;
+    expect(tools.every((t) => t.ownerTimesLent === 2)).toBe(true);
   });
 });

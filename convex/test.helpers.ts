@@ -8,6 +8,8 @@ import { canonical, sign, SIGNATURE_HEADER, TIMESTAMP_HEADER } from "./lib/hmac"
 export const SECRET = "test-secret-0123456789-abcdefghijklmnop";
 export const ADMIN_EMAIL = "admin@example.com";
 
+export const firstPage = (numItems = 50) => ({ paginationOpts: { numItems, cursor: null } });
+
 export function setup() {
   return convexTest(schema, modules);
 }
@@ -33,6 +35,19 @@ export async function createTool(as: Awaited<ReturnType<typeof signIn>>["as"], n
     condition: "good",
     description: "18V with two batteries",
   });
+}
+
+// Request and approve through the real mutations, so the denormalized state is kept.
+export async function lend(
+  owner: Awaited<ReturnType<typeof signIn>>,
+  borrower: Awaited<ReturnType<typeof signIn>>,
+  toolId: Id<"tools">,
+  startDate: string,
+  endDate: string,
+) {
+  const loanId = await borrower.as.mutation(api.loans.request, { toolId, startDate, endDate });
+  await owner.as.mutation(api.loans.approve, { loanId });
+  return loanId;
 }
 
 export async function insertLoan(

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./_generated/api";
-import { ADMIN_EMAIL, setup, signIn } from "./test.helpers";
+import { ADMIN_EMAIL, firstPage, setup, signIn } from "./test.helpers";
 
 beforeEach(() => vi.stubEnv("ADMIN_EMAILS", ` ${ADMIN_EMAIL.toUpperCase()} , other-admin@example.com`));
 afterEach(() => vi.unstubAllEnvs());
@@ -36,13 +36,13 @@ describe("users", () => {
     const ana = await signIn(t, "Ana");
     const admin = await signIn(t, "Admin", ADMIN_EMAIL);
 
-    await expect(ana.as.query(api.users.listForAdmin, {})).rejects.toThrow(/Admins only/);
+    await expect(ana.as.query(api.users.listForAdmin, firstPage())).rejects.toThrow(/Admins only/);
     await expect(ana.as.mutation(api.users.setTrustedLender, { userId: ana.id, trusted: true })).rejects.toThrow(
       /Admins only/,
     );
 
     await admin.as.mutation(api.users.setTrustedLender, { userId: ana.id, trusted: true });
     expect(await ana.as.query(api.users.me, {})).toMatchObject({ trustedLender: true });
-    expect(await admin.as.query(api.users.listForAdmin, {})).toHaveLength(2);
+    expect((await admin.as.query(api.users.listForAdmin, firstPage())).page).toHaveLength(2);
   });
 });

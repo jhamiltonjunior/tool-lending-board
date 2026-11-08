@@ -1,6 +1,8 @@
 import { v, ConvexError } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import { mutation, query, internalMutation } from "./_generated/server";
 import { currentUser, requireAdmin } from "./lib/auth";
+import { bumpUsers } from "./lib/board";
 
 function isBootstrapAdmin(email: string): boolean {
   const list = (process.env.ADMIN_EMAILS ?? "")
@@ -28,12 +30,14 @@ export const store = mutation({
       if (Object.keys(patch).length) await ctx.db.patch(existing._id, patch);
       return existing._id;
     }
+    await bumpUsers(ctx, 1);
     return await ctx.db.insert("users", {
       tokenIdentifier: identity.tokenIdentifier,
       name,
       email,
       role: isBootstrapAdmin(email) ? "admin" : "user",
       trustedLender: false,
+      timesLent: 0,
     });
   },
 });
@@ -48,17 +52,20 @@ export const me = query({
 });
 
 export const listForAdmin = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
     await requireAdmin(ctx);
-    const users = await ctx.db.query("users").collect();
-    return users.map((u) => ({
-      _id: u._id,
-      name: u.name,
-      email: u.email,
-      role: u.role,
-      trustedLender: u.trustedLender,
-    }));
+    const page = await ctx.db.query("users").order("desc").paginate(paginationOpts);
+    return {
+      ...page,
+      page: page.page.map((u) => ({
+        _id: u._id,
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        trustedLender: u.trustedLender,
+      })),
+    };
   },
 });
 

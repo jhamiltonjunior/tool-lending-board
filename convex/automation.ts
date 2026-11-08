@@ -2,18 +2,39 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { requireAdmin } from "./lib/auth";
 
-const PROBLEM_KINDS = new Set(["workflow_error", "notification_failed", "reminder_failed"]);
+const PROBLEM_KINDS = ["workflow_error", "notification_failed", "reminder_failed"] as const;
+const PROBLEMS_SHOWN = 20;
 
-// Admin view of failed automation runs, so nothing fails silently.
+// Admin view of failed automation runs, so nothing fails silently. Reads each problem
+// kind through its index, so successful runs never push a failure out of view.
 export const recentProblems = query({
   args: {},
   handler: async (ctx) => {
     await requireAdmin(ctx);
-    const events = await ctx.db.query("automationEvents").order("desc").take(300);
-    return events
-      .filter((e) => PROBLEM_KINDS.has(e.kind))
-      .slice(0, 20)
-      .map((e) => ({ _id: e._id, kind: e.kind, detail: e.detail, at: e._creationTime }));
+    const perKind = await Promise.all(
+      PROBLEM_KINDS.map((kind) =>
+        ctx.db
+          .query("automationEvents")
+          .withIndex("by_kind", (q) => q.eq("kind", kind))
+          .order("desc")
+          .take(PROBLEMS_SHOWN),
+      ),
+    );
+    const latest = perKind
+      .flat()
+      .sort((a, b) => b._creationTime - a._creationTime)
+      .slice(0, PROBLEMS_SHOWN);
+    return Promise.all(
+      latest.map(async (e) => ({
+        _id: e._id,
+        kind: e.kind,
+        detail: e.detail,
+        at: e._creationTime,
+        // A failed notification can be resent while it is still dead.
+        outboxId: e.outboxId ?? null,
+        outboxState: e.outboxId ? ((await ctx.db.get(e.outboxId))?.state ?? null) : null,
+      })),
+    );
   },
 });
 

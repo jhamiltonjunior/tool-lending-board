@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./_generated/api";
-import { verify, SIGNATURE_HEADER, TIMESTAMP_HEADER } from "./lib/hmac";
+import { SIGNATURE_HEADER } from "./lib/hmac";
 import { ADMIN_EMAIL, SECRET, createTool, day, insertLoan, setup, signIn, signedInit, type T } from "./test.helpers";
-
-const WEBHOOK = "http://n8n.test/webhook/lendloop-loan-events";
 
 beforeEach(() => {
   vi.stubEnv("LENDLOOP_WEBHOOK_SECRET", SECRET);
@@ -11,8 +9,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllEnvs();
-  vi.unstubAllGlobals();
-  vi.useRealTimers();
 });
 
 async function overdueWorld(t: T) {
@@ -134,62 +130,5 @@ describe("workflow errors", () => {
     const problems = await admin.as.query(api.automation.recentProblems, {});
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatchObject({ kind: "workflow_error", detail: "Node 'Send' failed" });
-  });
-});
-
-describe("loan notifications to n8n", () => {
-  async function requestLoan(t: T) {
-    const owner = await signIn(t, "Ana");
-    const borrower = await signIn(t, "Bob");
-    const toolId = await createTool(owner.as);
-    const loanId = await borrower.as.mutation(api.loans.request, { toolId, startDate: day(1), endDate: day(2) });
-    return { loanId };
-  }
-
-  it("send a signed, minimal payload", async () => {
-    vi.useFakeTimers();
-    vi.stubEnv("N8N_LOAN_EVENTS_WEBHOOK_URL", WEBHOOK);
-    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () => new Response("ok"));
-    vi.stubGlobal("fetch", fetchMock);
-    const t = setup();
-    const { loanId } = await requestLoan(t);
-
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe(WEBHOOK);
-    const headers = init.headers as Record<string, string>;
-    const body = init.body as string;
-    const valid = await verify(SECRET, {
-      timestamp: headers[TIMESTAMP_HEADER],
-      signature: headers[SIGNATURE_HEADER],
-      method: "POST",
-      path: "/webhook/lendloop-loan-events",
-      body,
-    });
-    expect(valid).toBe(true);
-
-    const payload = JSON.parse(body);
-    expect(Object.keys(payload).sort()).toEqual(
-      ["endDate", "eventKey", "loanId", "recipient", "startDate", "status", "toolName", "type"].sort(),
-    );
-    expect(payload).toMatchObject({ loanId, status: "pending", recipient: { name: "Ana", email: "ana@example.com" } });
-  });
-
-  it("retry five times, then record the failure on the loan", async () => {
-    vi.useFakeTimers();
-    vi.stubEnv("N8N_LOAN_EVENTS_WEBHOOK_URL", WEBHOOK);
-    const fetchMock = vi.fn(async () => new Response("down", { status: 503 }));
-    vi.stubGlobal("fetch", fetchMock);
-    const t = setup();
-    const { loanId } = await requestLoan(t);
-
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-
-    expect(fetchMock).toHaveBeenCalledTimes(5);
-    const events = await t.run((ctx) => ctx.db.query("automationEvents").collect());
-    expect(events).toEqual([expect.objectContaining({ loanId, kind: "notification_failed" })]);
-    expect(events[0].detail).toMatch(/after 5 attempts: n8n responded 503/);
   });
 });

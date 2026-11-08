@@ -9,12 +9,17 @@
  */
 
 import type * as automation from "../automation.js";
+import type * as clock from "../clock.js";
+import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_board from "../lib/board.js";
 import type * as lib_hmac from "../lib/hmac.js";
+import type * as lib_singletons from "../lib/singletons.js";
 import type * as loans from "../loans.js";
 import type * as notifications from "../notifications.js";
 import type * as seed from "../seed.js";
+import type * as stats from "../stats.js";
 import type * as tools from "../tools.js";
 import type * as users from "../users.js";
 
@@ -26,12 +31,17 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   automation: typeof automation;
+  clock: typeof clock;
+  crons: typeof crons;
   http: typeof http;
   "lib/auth": typeof lib_auth;
+  "lib/board": typeof lib_board;
   "lib/hmac": typeof lib_hmac;
+  "lib/singletons": typeof lib_singletons;
   loans: typeof loans;
   notifications: typeof notifications;
   seed: typeof seed;
+  stats: typeof stats;
   tools: typeof tools;
   users: typeof users;
 }>;

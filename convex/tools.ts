@@ -1,11 +1,15 @@
 import { v, ConvexError } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import type { Doc, Id } from "./_generated/dataModel";
-import { requireAdmin, requireUser, todayUTC } from "./lib/auth";
+import type { Doc } from "./_generated/dataModel";
+import { requireAdmin, requireUser } from "./lib/auth";
+import { bumpCategory } from "./lib/board";
+import { getSingleton } from "./lib/singletons";
 import { categories, conditions } from "./schema";
 
 const LIMITS = { name: 80, description: 500 };
+const PUBLIC_LIMIT = 50;
 
 function validateTool(input: { name: string; category: string; condition: string; description: string }) {
   const name = input.name.trim();
@@ -18,41 +22,22 @@ function validateTool(input: { name: string; category: string; condition: string
   return { name, description, category: input.category, condition: input.condition };
 }
 
-// The active loan (approved and already started), if any: the tool is with a borrower.
-async function activeLoan(ctx: QueryCtx, toolId: Id<"tools">, today: string): Promise<Doc<"loans"> | null> {
-  const loans = await ctx.db
-    .query("loans")
-    .withIndex("by_tool", (q) => q.eq("toolId", toolId))
-    .collect();
-  return loans.find((l) => l.status === "approved" && l.startDate <= today) ?? null;
-}
-
-async function isOnLoan(ctx: QueryCtx, toolId: Id<"tools">, today: string): Promise<boolean> {
-  return (await activeLoan(ctx, toolId, today)) !== null;
-}
-
-// How many times an owner has lent something (approved or completed loans).
-async function timesLent(ctx: QueryCtx, ownerId: Id<"users">): Promise<number> {
-  const loans = await ctx.db.query("loans").withIndex("by_owner", (q) => q.eq("ownerId", ownerId)).collect();
-  return loans.filter((l) => l.status === "approved" || l.status === "returned").length;
-}
-
 // Public, unauthenticated: name and category only. No owner, condition or description.
+// Reads no identity, so Convex serves one cached result to every visitor.
 export const publicList = query({
   args: {},
   handler: async (ctx) => {
-    const today = todayUTC();
-    const tools = await ctx.db.query("tools").order("desc").take(200);
-    const out: { _id: Id<"tools">; name: string; category: string }[] = [];
-    for (const t of tools) {
-      if (!(await isOnLoan(ctx, t._id, today))) out.push({ _id: t._id, name: t.name, category: t.category });
-    }
-    return out;
+    const tools = await ctx.db
+      .query("tools")
+      .withIndex("by_lent", (q) => q.eq("lentUntil", undefined))
+      .order("desc")
+      .take(PUBLIC_LIMIT);
+    return tools.map((t) => ({ _id: t._id, name: t.name, category: t.category }));
   },
 });
 
-async function withOwner(ctx: QueryCtx, t: Doc<"tools">, today: string) {
-  const [owner, loan, lent] = await Promise.all([ctx.db.get(t.ownerId), activeLoan(ctx, t._id, today), timesLent(ctx, t.ownerId)]);
+async function withOwner(ctx: QueryCtx, t: Doc<"tools">) {
+  const owner = await ctx.db.get(t.ownerId);
   return {
     _id: t._id,
     name: t.name,
@@ -62,22 +47,48 @@ async function withOwner(ctx: QueryCtx, t: Doc<"tools">, today: string) {
     ownerId: t.ownerId,
     ownerName: owner?.name ?? "Unknown",
     ownerTrusted: owner?.trustedLender ?? false,
-    ownerTimesLent: lent,
-    available: loan === null,
+    ownerTimesLent: owner?.timesLent ?? 0,
+    available: t.activeLoanId === undefined,
     // When the tool is due back (YYYY-MM-DD), only while it is lent out.
-    backOn: loan?.endDate ?? null,
+    backOn: t.lentUntil ?? null,
   };
 }
 
+// The board, one page at a time. Search runs on the server (full-text index on the
+// name, prefix-matched), optionally narrowed to one category.
 export const list = query({
-  args: { category: v.optional(v.string()) },
-  handler: async (ctx, { category }) => {
+  args: { paginationOpts: paginationOptsValidator, category: v.optional(v.string()), search: v.optional(v.string()) },
+  handler: async (ctx, { paginationOpts, category, search }) => {
     await requireUser(ctx);
-    const today = todayUTC();
-    const tools = category
-      ? await ctx.db.query("tools").withIndex("by_category", (q) => q.eq("category", category)).collect()
-      : await ctx.db.query("tools").order("desc").collect();
-    return Promise.all(tools.map((t) => withOwner(ctx, t, today)));
+    const term = search?.trim().slice(0, 80);
+    const page = term
+      ? await ctx.db
+          .query("tools")
+          .withSearchIndex("search_name", (q) => {
+            const s = q.search("name", term);
+            return category ? s.eq("category", category) : s;
+          })
+          .paginate(paginationOpts)
+      : category
+        ? await ctx.db
+            .query("tools")
+            .withIndex("by_category", (q) => q.eq("category", category))
+            .order("desc")
+            .paginate(paginationOpts)
+        : await ctx.db.query("tools").order("desc").paginate(paginationOpts);
+    return { ...page, page: await Promise.all(page.page.map((t) => withOwner(ctx, t))) };
+  },
+});
+
+// Header numbers for the board, from counters instead of counting tools.
+export const stats = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireUser(ctx);
+    const board = await getSingleton(ctx, "board");
+    const byCategory = board?.toolsByCategory ?? {};
+    const total = Object.values(byCategory).reduce((a, b) => a + b, 0);
+    return { total, free: Math.max(0, total - (board?.lentOut ?? 0)), byCategory };
   },
 });
 
@@ -85,9 +96,8 @@ export const mine = query({
   args: {},
   handler: async (ctx) => {
     const user = await requireUser(ctx);
-    const today = todayUTC();
     const tools = await ctx.db.query("tools").withIndex("by_owner", (q) => q.eq("ownerId", user._id)).collect();
-    return Promise.all(tools.map((t) => withOwner(ctx, t, today)));
+    return Promise.all(tools.map((t) => withOwner(ctx, t)));
   },
 });
 
@@ -102,7 +112,9 @@ export const create = mutation({
   args: toolArgs,
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
-    return await ctx.db.insert("tools", { ownerId: user._id, ...validateTool(args) });
+    const tool = validateTool(args);
+    await bumpCategory(ctx, tool.category, 1);
+    return await ctx.db.insert("tools", { ownerId: user._id, ...tool });
   },
 });
 
@@ -113,19 +125,24 @@ export const update = mutation({
     const tool = await ctx.db.get(toolId);
     if (!tool) throw new ConvexError("Tool not found");
     if (tool.ownerId !== user._id) throw new ConvexError("You can only edit your own listings");
-    await ctx.db.patch(toolId, validateTool(args));
+    const next = validateTool(args);
+    if (next.category !== tool.category) {
+      await bumpCategory(ctx, tool.category, -1);
+      await bumpCategory(ctx, next.category, 1);
+    }
+    await ctx.db.patch(toolId, next);
   },
 });
 
-async function deleteToolAndOpenRequests(ctx: MutationCtx, toolId: Id<"tools">) {
-  const loans = await ctx.db.query("loans").withIndex("by_tool", (q) => q.eq("toolId", toolId)).collect();
-  if (loans.some((l) => l.status === "approved")) {
+async function deleteToolAndOpenRequests(ctx: MutationCtx, tool: Doc<"tools">) {
+  const byStatus = (status: "approved" | "pending") =>
+    ctx.db.query("loans").withIndex("by_tool_status", (q) => q.eq("toolId", tool._id).eq("status", status)).collect();
+  if ((await byStatus("approved")).length > 0) {
     throw new ConvexError("This tool is currently lent out; mark it returned first");
   }
-  for (const l of loans) {
-    if (l.status === "pending") await ctx.db.patch(l._id, { status: "cancelled" });
-  }
-  await ctx.db.delete(toolId);
+  for (const l of await byStatus("pending")) await ctx.db.patch(l._id, { status: "cancelled" });
+  await bumpCategory(ctx, tool.category, -1);
+  await ctx.db.delete(tool._id);
 }
 
 export const remove = mutation({
@@ -135,7 +152,7 @@ export const remove = mutation({
     const tool = await ctx.db.get(toolId);
     if (!tool) throw new ConvexError("Tool not found");
     if (tool.ownerId !== user._id) throw new ConvexError("You can only delete your own listings");
-    await deleteToolAndOpenRequests(ctx, toolId);
+    await deleteToolAndOpenRequests(ctx, tool);
   },
 });
 
@@ -145,6 +162,6 @@ export const adminRemove = mutation({
     await requireAdmin(ctx);
     const tool = await ctx.db.get(toolId);
     if (!tool) throw new ConvexError("Tool not found");
-    await deleteToolAndOpenRequests(ctx, toolId);
+    await deleteToolAndOpenRequests(ctx, tool);
   },
 });

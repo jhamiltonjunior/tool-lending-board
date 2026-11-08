@@ -1,11 +1,16 @@
 import { v, ConvexError } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internal } from "./_generated/api";
 import { requireAdmin, requireUser, todayUTC } from "./lib/auth";
+import { refreshToolLoan } from "./lib/board";
+import { storedToday } from "./lib/singletons";
+import { enqueueLoanEvent } from "./notifications";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// A person's own lists show their most recent loans; older history stays in the database.
+const PER_USER_LIMIT = 200;
 const MAX_LOAN_DAYS = 60;
 
 function validateRange(startDate: string, endDate: string) {
@@ -19,16 +24,15 @@ function validateRange(startDate: string, endDate: string) {
 const overlaps = (a: { startDate: string; endDate: string }, b: { startDate: string; endDate: string }) =>
   a.startDate <= b.endDate && b.startDate <= a.endDate;
 
-// Notify only the person who needs to act or to know. The payload is minimised in
-// notifications.ts; here we only decide who the recipient is.
+// Notify only the person who needs to act or to know. The event goes to the outbox in
+// this same transaction; notifications.ts delivers it and minimises the payload.
 async function notify(ctx: MutationCtx, loan: Doc<"loans">, recipient: "owner" | "borrower") {
-  await ctx.scheduler.runAfter(0, internal.notifications.sendLoanEvent, {
+  await enqueueLoanEvent(ctx, {
     loanId: loan._id,
     recipientId: recipient === "owner" ? loan.ownerId : loan.borrowerId,
     status: loan.status,
-    // Unique per state change so n8n write-backs and redeliveries stay idempotent.
-    eventKey: `${loan._id}:${loan.status}:${Date.now()}`,
-    attempt: 1,
+    // One key per state change, the same across retries, so redeliveries stay idempotent.
+    eventKey: `${loan._id}:${loan.status}`,
   });
 }
 
@@ -41,11 +45,15 @@ export const request = mutation({
     if (!tool) throw new ConvexError("Tool not found");
     if (tool.ownerId === user._id) throw new ConvexError("You cannot borrow your own tool");
 
-    const existing = await ctx.db.query("loans").withIndex("by_tool", (q) => q.eq("toolId", toolId)).collect();
-    if (existing.some((l) => l.status === "approved" && overlaps(l, { startDate, endDate }))) {
+    const [approved, pending] = await Promise.all(
+      (["approved", "pending"] as const).map((status) =>
+        ctx.db.query("loans").withIndex("by_tool_status", (q) => q.eq("toolId", toolId).eq("status", status)).collect(),
+      ),
+    );
+    if (approved.some((l) => overlaps(l, { startDate, endDate }))) {
       throw new ConvexError("The tool is already lent out for part of that period");
     }
-    if (existing.some((l) => l.status === "pending" && l.borrowerId === user._id)) {
+    if (pending.some((l) => l.borrowerId === user._id)) {
       throw new ConvexError("You already have a pending request for this tool");
     }
 
@@ -75,11 +83,17 @@ export const approve = mutation({
   handler: async (ctx, { loanId }) => {
     const loan = await loadForOwner(ctx, loanId);
     if (loan.status !== "pending") throw new ConvexError("Only pending requests can be approved");
-    const others = await ctx.db.query("loans").withIndex("by_tool", (q) => q.eq("toolId", loan.toolId)).collect();
-    if (others.some((l) => l._id !== loan._id && l.status === "approved" && overlaps(l, loan))) {
+    const approved = await ctx.db
+      .query("loans")
+      .withIndex("by_tool_status", (q) => q.eq("toolId", loan.toolId).eq("status", "approved"))
+      .collect();
+    if (approved.some((l) => overlaps(l, loan))) {
       throw new ConvexError("Another approved loan overlaps these dates");
     }
     await ctx.db.patch(loanId, { status: "approved" });
+    const owner = await ctx.db.get(loan.ownerId);
+    if (owner) await ctx.db.patch(owner._id, { timesLent: (owner.timesLent ?? 0) + 1 });
+    await refreshToolLoan(ctx, loan.toolId, todayUTC()); // a loan starting today is out right away
     await notify(ctx, { ...loan, status: "approved" }, "borrower");
   },
 });
@@ -100,6 +114,7 @@ export const markReturned = mutation({
     const loan = await loadForOwner(ctx, loanId);
     if (loan.status !== "approved") throw new ConvexError("Only active loans can be marked returned");
     await ctx.db.patch(loanId, { status: "returned", returnedAt: Date.now() });
+    await refreshToolLoan(ctx, loan.toolId, todayUTC());
     await notify(ctx, { ...loan, status: "returned" }, "borrower");
   },
 });
@@ -117,7 +132,7 @@ export const cancel = mutation({
   },
 });
 
-async function present(ctx: QueryCtx, loan: Doc<"loans">) {
+async function present(ctx: QueryCtx, loan: Doc<"loans">, today: string) {
   const [tool, owner, borrower, events] = await Promise.all([
     ctx.db.get(loan.toolId),
     ctx.db.get(loan.ownerId),
@@ -125,7 +140,6 @@ async function present(ctx: QueryCtx, loan: Doc<"loans">) {
     ctx.db.query("automationEvents").withIndex("by_loan", (q) => q.eq("loanId", loan._id)).collect(),
   ]);
   const lastActivity = events.sort((a, b) => b._creationTime - a._creationTime)[0];
-  const today = todayUTC();
   return {
     _id: loan._id,
     toolName: tool?.name ?? "(removed tool)",
@@ -138,7 +152,7 @@ async function present(ctx: QueryCtx, loan: Doc<"loans">) {
     startDate: loan.startDate,
     endDate: loan.endDate,
     status: loan.status,
-    overdue: loan.status === "approved" && loan.endDate < todayUTC(),
+    overdue: loan.status === "approved" && loan.endDate < today,
     lastActivity: lastActivity
       ? { kind: lastActivity.kind, at: lastActivity._creationTime, detail: lastActivity.detail }
       : null,
@@ -149,8 +163,13 @@ export const myRequests = query({
   args: {},
   handler: async (ctx) => {
     const user = await requireUser(ctx);
-    const loans = await ctx.db.query("loans").withIndex("by_borrower", (q) => q.eq("borrowerId", user._id)).order("desc").collect();
-    return Promise.all(loans.map((l) => present(ctx, l)));
+    const loans = await ctx.db
+      .query("loans")
+      .withIndex("by_borrower", (q) => q.eq("borrowerId", user._id))
+      .order("desc")
+      .take(PER_USER_LIMIT);
+    const today = await storedToday(ctx);
+    return Promise.all(loans.map((l) => present(ctx, l, today)));
   },
 });
 
@@ -158,16 +177,23 @@ export const incoming = query({
   args: {},
   handler: async (ctx) => {
     const user = await requireUser(ctx);
-    const loans = await ctx.db.query("loans").withIndex("by_owner", (q) => q.eq("ownerId", user._id)).order("desc").collect();
-    return Promise.all(loans.map((l) => present(ctx, l)));
+    const loans = await ctx.db
+      .query("loans")
+      .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+      .order("desc")
+      .take(PER_USER_LIMIT);
+    const today = await storedToday(ctx);
+    return Promise.all(loans.map((l) => present(ctx, l, today)));
   },
 });
 
+// Admin view of every loan, one page at a time.
 export const all = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
     await requireAdmin(ctx);
-    const loans = await ctx.db.query("loans").order("desc").take(500);
-    return Promise.all(loans.map((l) => present(ctx, l)));
+    const page = await ctx.db.query("loans").order("desc").paginate(paginationOpts);
+    const today = await storedToday(ctx);
+    return { ...page, page: await Promise.all(page.page.map((l) => present(ctx, l, today))) };
   },
 });

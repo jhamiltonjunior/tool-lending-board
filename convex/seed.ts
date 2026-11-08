@@ -1,6 +1,8 @@
 import { internalMutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
+import { todayUTC } from "./lib/auth";
+import { recomputeBoard } from "./lib/board";
 
 const SEED_PREFIX = "seed|";
 
@@ -27,13 +29,16 @@ const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISO
 async function clearSeed(ctx: MutationCtx) {
   const users = (await ctx.db.query("users").collect()).filter((u) => u.tokenIdentifier.startsWith(SEED_PREFIX));
   const ids = new Set(users.map((u) => u._id as string));
+  const seededLoans = new Set<string>();
   for (const loan of await ctx.db.query("loans").collect()) {
     if (ids.has(loan.ownerId) || ids.has(loan.borrowerId)) {
+      seededLoans.add(loan._id);
       for (const r of await ctx.db.query("reminders").withIndex("by_loan", (q) => q.eq("loanId", loan._id)).collect()) await ctx.db.delete(r._id);
       for (const e of await ctx.db.query("automationEvents").withIndex("by_loan", (q) => q.eq("loanId", loan._id)).collect()) await ctx.db.delete(e._id);
       await ctx.db.delete(loan._id);
     }
   }
+  for (const o of await ctx.db.query("outbox").collect()) if (seededLoans.has(o.loanId)) await ctx.db.delete(o._id);
   for (const tool of await ctx.db.query("tools").collect()) if (ids.has(tool.ownerId)) await ctx.db.delete(tool._id);
   for (const u of users) await ctx.db.delete(u._id);
 }
@@ -82,6 +87,7 @@ export const demo = internalMutation({
     await loan("Cordless drill", "ana", "marcos", -30, -27, "returned");
     await loan("Cordless drill", "ana", "julia", -20, -18, "returned");
     await loan("Claw hammer and nails", "rafael", "ana", -15, -14, "returned");
+    await recomputeBoard(ctx, todayUTC()); // counters and "with borrower" state for the new data
     return { overdueLoanId: overdue };
   },
 });
@@ -91,5 +97,6 @@ export const reset = internalMutation({
   args: {},
   handler: async (ctx) => {
     await clearSeed(ctx);
+    await recomputeBoard(ctx, todayUTC());
   },
 });

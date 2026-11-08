@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { ADMIN_EMAIL, createTool, day, setup, signIn, type T } from "./test.helpers";
+import { ADMIN_EMAIL, createTool, day, firstPage, setup, signIn, type T } from "./test.helpers";
 
 beforeEach(() => {
   vi.stubEnv("ADMIN_EMAILS", ADMIN_EMAIL);
@@ -21,12 +21,9 @@ async function world() {
   return { t, owner, borrower, toolId };
 }
 
-// Notifications are scheduled, not sent inline: inspect what was queued.
-async function scheduledNotifications(t: T) {
-  const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
-  return jobs
-    .filter((j) => j.name.includes("sendLoanEvent"))
-    .map((j) => j.args[0] as { recipientId: Id<"users">; status: string });
+// Notifications go to the outbox in the same transaction: inspect what was queued.
+async function scheduledNotifications(t: T): Promise<{ recipientId: Id<"users">; status: string }[]> {
+  return t.run((ctx) => ctx.db.query("outbox").collect());
 }
 
 describe("requesting a tool", () => {
@@ -150,7 +147,7 @@ describe("views", () => {
     expect(await owner.as.query(api.loans.incoming, {})).toHaveLength(1);
     expect(await owner.as.query(api.loans.myRequests, {})).toHaveLength(0);
     expect(await borrower.as.query(api.loans.myRequests, {})).toHaveLength(1);
-    await expect(owner.as.query(api.loans.all, {})).rejects.toThrow(/Admins only/);
-    expect(await admin.as.query(api.loans.all, {})).toHaveLength(1);
+    await expect(owner.as.query(api.loans.all, firstPage())).rejects.toThrow(/Admins only/);
+    expect((await admin.as.query(api.loans.all, firstPage())).page).toHaveLength(1);
   });
 });
