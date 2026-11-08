@@ -8,10 +8,10 @@ import { Activity, daysLate, DueTag, Empty, formatRange, Loading, ToolGlyph } fr
 export type Loan = FunctionReturnType<typeof api.loans.myRequests>[number];
 type Perspective = "borrower" | "owner" | "admin";
 
-type Phase = "pending" | "upcoming" | "out" | "late" | "returned" | "declined" | "cancelled";
+type Phase = "pending" | "upcoming" | "out" | "late" | "reported" | "returned" | "declined" | "cancelled";
 
 function phaseOf(l: Loan): Phase {
-  if (l.status === "approved") return l.overdue ? "late" : l.started ? "out" : "upcoming";
+  if (l.status === "approved") return l.returnReported ? "reported" : l.overdue ? "late" : l.started ? "out" : "upcoming";
   return l.status;
 }
 
@@ -26,6 +26,7 @@ function sentence(l: Loan, p: Perspective, phase: Phase): ReactNode {
       upcoming: "is picking up your",
       out: "has your",
       late: "still has your",
+      reported: "says they returned your",
       returned: "returned your",
       declined: "asked for your",
       cancelled: "cancelled the request for your",
@@ -38,6 +39,7 @@ function sentence(l: Loan, p: Perspective, phase: Phase): ReactNode {
       case "upcoming": return <>{owner} is lending you the {tool}</>;
       case "out": return <>You have {owner}&apos;s {tool}</>;
       case "late": return <>You still have {owner}&apos;s {tool}</>;
+      case "reported": return <>You gave back {owner}&apos;s {tool}</>;
       case "returned": return <>You returned {owner}&apos;s {tool}</>;
       case "declined": return <>{owner} declined your request for the {tool}</>;
       case "cancelled": return <>You cancelled your request for the {tool}</>;
@@ -51,6 +53,7 @@ const STATE: Record<Phase, { text: string; cls?: string }> = {
   upcoming: { text: "Approved", cls: "is-approved" },
   out: { text: "With borrower" },
   late: { text: "Late", cls: "is-late" },
+  reported: { text: "Waiting for the owner to confirm" },
   returned: { text: "Returned" },
   declined: { text: "Declined", cls: "is-declined" },
   cancelled: { text: "Cancelled" },
