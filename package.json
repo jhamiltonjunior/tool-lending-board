@@ -13,10 +13,10 @@
   "dependencies": {
     "@clerk/nextjs": "^7.9.25",
     "convex": "^1.49.0",
-    "lucide-react": "^1.69.0",
+    "lucide-react": "^1.72.0",
     "next": "15.5.29",
-    "react": "~19.1.4",
-    "react-dom": "~19.1.4"
+    "react": "~19.3.1",
+    "react-dom": "~19.3.1"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
@@ -25,11 +25,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "convex-test": "^0.0.67",
+    "convex-test": "^0.0.70",
     "eslint": "^9",
     "eslint-config-next": "15.5.29",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.7"
   }
 }
